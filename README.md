@@ -1,1 +1,1 @@
-# html-tasks
+# html-tasks for MERN Stack Development
