@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  .form-box {
+    width: 700px;
+    margin: 0 auto;
+    border: 1px solid black;
+    padding: 20px;
+  }
+
+  .form-box1{
+    width: 660px;
+    margin: auto;
+    border: 1px solid black;
+    padding: 20px;
+    align-items: center;
+    margin-right: 10px;
+  }
+  .form-box2{
+    width: 660px;
+    margin: auto;
+    border: 1px solid black;
+    padding: 20px;
+    align-items: right;
+    margin-right: 10px;
+    text-align: right;
+  }
+
+  .form {
+    margin: 0;
+    padding: 0;
+  }
+
+  .form-group {
+    display: flex;
+    align-items: center;
+    border: 0.5px solid black;
+
+  }
+
+  .form-group label {
+    flex: 0 0 30%;
+    font-weight: bold;
+    text-align: right;
+    padding: 8px;
+    border: 1px solid black;
+  }
+
+  .form-group input[type="text"],
+  .form-group input[type="email"],
+  .form-group input[type="password"],
+  .form-group input[type="number"],
+  .form-group input[type="radio"],
+  .form-group input[type="checkbox"] {
+    padding: 10px;
+    border: 1px solid black;
+    width: 460px;
+  }
+
+  .form-group.label-checkbox {
+    flex: 1;
+  }
+
+  .register-button {
+    text-align: center;
+    margin-top: 10px;
+  }
+
+  .register-button button {
+    background-color: rgb(207, 205, 205);
+    color: black;
+    cursor: pointer;
+    padding: 5px 10px;
+    font-size: 14px;
+  }
+
+  .register-button button:hover {
+    background-color: #f0f0f0;
+  }
+
+  h2 {
+    text-align: center;
+    color: blue;
+  }
+</style>
+</head>
+<body>
+<h2>Registration Form</h2>
+<div class="form-box">
+  <form class="form">
+    <div class="form-group">
+      <label for="firstName">First Name:</label>
+      <input type="text" id="firstName" name="firstName" required>
+    </div>
+    <div class="form-group">
+      <label for="username">Username:</label>
+      <input type="text" id="username" name="username" required>
+    </div>
+    <div class="form-group">
+      <label for="email">Email:</label>
+      <input type="email" id="email" name="email" required>
+    </div>
+    <div class="form-group">
+      <label for="password">Password:</label>
+      <input type="password" id="password" name="password" required>
+    </div>
+    <div class="form-group">
+      <label for="rePassword">Re-enter Password:</label>
+      <input type="password" id="rePassword" name="rePassword" required>
+    </div>
+    <div class="form-group">
+      <label for="gender">Gender:</label>
+      <input type="radio" id="male" name="gender" value="male"> Male
+      <br><input type="radio" id="female" name="gender" value="female"> Female
+    </div>
+    <div class="form-group">
+      <label for="age">Age:</label>
+      <input type="number" id="age" name="age" required>
+    </div>
+    <div class="form-group">
+      <label for="phoneNumber">Phone Number:</label>
+      <input type="text" id="phoneNumber" name="phoneNumber" required>
+    </div>
+    <div class="form-group">
+      <label for="address">Address:</label>
+      <input type="text" id="address" name="address" required>
+    </div>
+    <div class="form-group">
+      <label for="state">State:</label>
+      <input type="text" id="state" name="state" required>
+    </div>
+    <div class="form-group">
+      <label for="country">Country:</label>
+      <select>
+        <option> Choose your country</option>
+        <option>India</option>
+        <option>United States</option>
+        <option>Canada</option>
+        <option>Australia</option>
+        <option>Germany</option>
+    </select>
+    </div>
+    <div class="form-group">
+      <label for="languagesKnown">Languages Known:</label>
+        <input type="checkbox" name="language" value="English"> English
+        <input type="checkbox" name="language" value="Kannada"> Kannada
+        <input type="checkbox" name="language" value="Hindi"> Hindi
+        <input type="checkbox" name="language" value="Telugu"> Telugu 
+    </div>
+    <div class="form-box1">
+      <input type="checkbox" id="declaration">
+      <label for="declaration">I hereby declare all the given details are true.</label>
+    </div>
+    <div class="form-box2">
+      <label for="declaration">Log in to <a href="https://codemithra.com/">Ethnus</a> website</label>
+    </div>
+  </form>
+</div>
+<div class="register-button">
+  <button type="submit">Register</button>
+</div>
+</body>
+</html>
