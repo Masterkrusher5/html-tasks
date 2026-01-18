@@ -1,0 +1,106 @@
+import streamlit as st
+import pandas as pd
+import json
+from compliance_engine import ComplianceEngine
+from datetime import datetime
+
+# Page Config
+st.set_page_config(page_title="AI Compliance Surveillance", layout="wide")
+engine = ComplianceEngine()
+
+# Session State for Thread Reconstruction
+if 'threads' not in st.session_state:
+    st.session_state.threads = {}
+if 'alerts' not in st.session_state:
+    st.session_state.alerts = []
+
+st.title("🛡️ AI-Driven Communication Surveillance")
+st.sidebar.header("Configuration")
+threshold = st.sidebar.slider("Risk Threshold", 0.0, 1.0, 0.6)
+
+tab1, tab2, tab3 = st.tabs(["Real-time Monitor", "Batch Ingestion", "Risk Analytics"])
+
+# --- TAB 1: REAL-TIME MONITOR ---
+with tab1:
+    st.subheader("Live Email Ingestion")
+    with st.form("email_input"):
+        col1, col2 = st.columns(2)
+        sender = col1.text_input("Sender")
+        receiver = col2.text_input("Receiver")
+        thread_id = st.text_input("Thread ID (for Context Creation)")
+        body = st.text_area("Email Content")
+        submit = st.form_submit_button("Analyze Email")
+
+    if submit:
+        # 1. Thread Reconstruction
+        context = st.session_state.threads.get(thread_id, "No previous history.")
+        
+        # 2. Pipeline Execution
+        is_noise = engine.pre_filter(body)
+        if is_noise:
+            st.warning("Email filtered out as Non-Substantive (Noise).")
+        else:
+            h_score = engine.heuristic_score({'sender': sender, 'receiver': receiver})
+            ml_score = engine.ml_risk_scoring(body)
+            
+            combined_score = (h_score + ml_score) / 2
+            
+            if combined_score > 0.3: # Trigger LLM
+                with st.spinner("High Risk Detected. Running LLM Intent Analysis..."):
+                    raw_res = engine.analyze_with_llm(context, body)
+                    res = json.loads(raw_res)
+                    
+                    if res['flagged']:
+                        # Calculate Priority Score: Weight * Confidence
+                        weight = engine.matrix.get(res['category'], 1)
+                        priority_score = weight * res['confidence']
+                        
+                        alert_data = {
+                            "Time": datetime.now().strftime("%H:%M:%S"),
+                            "Category": res['category'],
+                            "Priority": priority_score,
+                            "Reason": res['reason'],
+                            "Evidence": res['evidence_line']
+                        }
+                        st.session_state.alerts.insert(0, alert_data)
+                        st.session_state.threads[thread_id] = body # Update context
+                        st.error(f"🚨 Potential Non-Compliance: {res['category']}")
+                    else:
+                        st.success("Analysis Complete: Email Compliant.")
+            else:
+                st.info("Heuristic layers cleared this email as Low Risk.")
+
+    st.divider()
+    st.subheader("Recent Alerts")
+    if st.session_state.alerts:
+        st.table(pd.DataFrame(st.session_state.alerts))
+
+# --- TAB 2: BATCH INGESTION ---
+with tab2:
+    st.subheader("Upload CSV/Excel for Mass Screening")
+    uploaded_file = st.file_uploader("Choose a file", type=['csv', 'xlsx'])
+    
+    if uploaded_file:
+        df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+        st.write("Preview of data:", df.head())
+        
+        if st.button("Run Batch Process"):
+            progress_bar = st.progress(0)
+            results = []
+            for i, row in df.iterrows():
+                # Logic simplified for batch
+                res_json = engine.analyze_with_llm("Batch mode", row['body'])
+                if res_json:
+                    results.append(json.loads(res_json))
+                progress_bar.progress((i + 1) / len(df))
+            
+            st.success("Processing Complete!")
+            res_df = pd.DataFrame(results)
+            st.dataframe(res_df)
+            st.download_button("Download Report", res_df.to_csv(), "compliance_report.csv")
+
+# --- TAB 3: ANALYTICS ---
+with tab3:
+    st.subheader("Compliance Prioritization Matrix")
+    matrix_df = pd.DataFrame(list(engine.matrix.items()), columns=['Category', 'Weightage'])
+    st.bar_chart(matrix_df.set_index('Category'))
