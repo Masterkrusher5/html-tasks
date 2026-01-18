@@ -1,0 +1,67 @@
+import os
+import json
+import re
+import requests
+import pandas as pd
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class ComplianceEngine:
+    def __init__(self):
+        self.endpoint = os.getenv("LLM_ENDPOINT")
+        self.api_key = os.getenv("LLM_KEY")
+        self.matrix = {
+            "Market Manipulation": 10,
+            "Insider Trading": 10,
+            "Quid Pro Quo": 9,
+            "Front Running": 9,
+            "Secrecy": 7,
+            "Policy Violation": 3
+        }
+
+    def pre_filter(self, text):
+        """Layer 1: Heuristic Noise Filter"""
+        noise = ["unsubscribe", "automatic reply", "newsletter", "meeting invite"]
+        return any(word in text.lower() for word in noise)
+
+    def heuristic_score(self, email_data):
+        """Layer 2: Behavioural Screening"""
+        score = 0
+        # Flag external domains
+        if not email_data['receiver'].endswith('@yourbank.com'):
+            score += 0.5
+        # Flag 'off-hours' (Simulated)
+        score += 0.2 
+        return score
+
+    def ml_risk_scoring(self, text):
+        """Layer 3: Simple Vector/Keyword Intent Score"""
+        risk_words = ["guarantee", "private", "delete this", "wire", "allocation"]
+        count = sum(1 for word in risk_words if word in text.lower())
+        return min(count * 0.2, 1.0)
+
+    def analyze_with_llm(self, context, current_email):
+        """Layer 4: DL Intent & LLM Reasoning"""
+        prompt = f"""
+        Analyze this bank communication for compliance.
+        CONTEXT: {context}
+        EMAIL: {current_email}
+
+        Return ONLY a JSON object:
+        {{
+            "flagged": true/false,
+            "category": "Category from Matrix",
+            "confidence": 0.0 to 1.0,
+            "reason": "Short explanation",
+            "evidence_line": "Exact quote from email"
+        }}
+        """
+        headers = {"Content-Type": "application/json", "api-key": self.api_key}
+        payload = {"messages": [{"role": "user", "content": prompt}], "temperature": 0}
+        
+        try:
+            response = requests.post(self.endpoint, headers=headers, json=payload, timeout=10)
+            return response.json()['choices'][0]['message']['content']
+        except:
+            return None
