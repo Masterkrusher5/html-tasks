@@ -4,16 +4,23 @@ import re
 import requests
 from dotenv import load_dotenv
 
-# Load Environment Variables from .env file
+# Load Environment Variables
 load_dotenv()
 
 class ComplianceEngine:
     def __init__(self):
-        # Configuration
+        # Configuration from .env
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
         
-        # 3. Predefined Matrix Weightage
+        # 1. Connection Pooling: Faster than making new requests for every email
+        self.session = requests.Session()
+        self.session.headers.update({
+            "Content-Type": "application/json",
+            "api-key": self.api_key
+        })
+        
+        # 2. Predefined Priority Matrix (Weightage)
         self.matrix = {
             "Market Manipulation": 10,
             "Insider Trading": 10,
@@ -24,109 +31,105 @@ class ComplianceEngine:
             "Compliant": 0
         }
 
-    # --- STAGE 1: PRE-FILTERING (Kill False Positives/Noise) ---
-    def pre_filter(self, text):
-        """Identifies automated noise, newsletters, and system messages."""
+    # --- STAGE 1: PRE-FILTERING (Ultra Fast) ---
+    def pre_filter(self, subject, body):
+        """Identifies automated noise, newsletters, and system messages locally."""
         noise_patterns = [
             r"unsubscribe", r"automatic reply", r"out of office", 
             r"newsletter", r"mailing list", r"noreply@", r"system alert"
         ]
-        text_lower = text.lower()
-        return any(re.search(pattern, text_lower) for pattern in noise_patterns)
+        # Combine subject and body for a single scan
+        text_to_scan = f"{str(subject)} {str(body)}".lower()
+        return any(re.search(pattern, text_to_scan) for pattern in noise_patterns)
 
     # --- STAGE 2: HEURISTIC & BEHAVIOURAL SCREENING ---
     def heuristic_score(self, email_data):
         """Checks for behavioral anomalies (external domains, etc.)."""
         score = 0.0
+        receiver = str(email_data.get('receiver', '')).lower()
         # Flag if the receiver is not an internal bank employee
-        if not email_data.get('receiver', '').lower().endswith('@yourbank.com'):
+        if receiver and not receiver.endswith('@yourbank.com'):
             score += 0.5
         return score
 
-    # --- STAGE 3: ML RISK SCORING (Preliminary Intent Check) ---
-    def ml_risk_scoring(self, text):
-        """Simulates DL Intent check by looking for high-risk clusters."""
+    # --- STAGE 3: ML RISK SCORING (Vectorized/Keyword Check) ---
+    def ml_risk_scoring(self, subject, body):
+        """Preliminary Intent check to see if we should 'spend' an LLM call."""
         risk_keywords = [
-            "guarantee", "off the record", "delete this", 
-            "wire transfer", "allocation", "favorable", "confidential"
+            "guarantee", "off the record", "delete this", "wire transfer", 
+            "allocation", "favorable", "confidential", "bonus", "inside info"
         ]
-        text_lower = text.lower()
-        count = sum(1 for word in risk_keywords if word in text_lower)
-        # Return a normalized score between 0 and 1
+        text_to_scan = f"{str(subject)} {str(body)}".lower()
+        count = sum(1 for word in risk_keywords if word in text_to_scan)
+        # Returns a normalized score 0.0 - 1.0
         return min(count * 0.4, 1.0)
 
-    # --- STAGE 4: LLM REASONING & EXTRACTION ---
-    def analyze_with_llm(self, context, current_email):
+    # --- STAGE 4: LLM REASONING (Thread-Safe for Parallel Batching) ---
+    def analyze_single_llm_call(self, data_tuple):
         """
-        Final reasoning layer. Uses LLM to extract evidence and 
-        categorize based on context.
+        Designed for parallel execution via ThreadPoolExecutor.
+        data_tuple: (index, context, subject, body)
         """
+        idx, context, subject, body = data_tuple
+        
         prompt = f"""
         Act as a Banking Compliance Surveillance Officer. 
-        Analyze the following email in the context of the conversation history.
+        Analyze the following email for malicious intent (Market Manipulation, Quid Pro Quo, etc.).
+        
+        CONTEXT (Conversation History): {context}
+        SUBJECT: {subject}
+        EMAIL BODY: {body}
 
-        CONTEXT (Previous Messages): {context}
-        CURRENT EMAIL: {current_email}
-
-        TASK:
-        1. Identify if there is potential non-compliant intent.
-        2. Assign a category from this list: {list(self.matrix.keys())}.
-        3. Extract the exact 'Source Line' that is suspicious.
-        4. Provide a reasoning for your decision.
-
-        OUTPUT FORMAT (Return ONLY valid JSON):
+        OUTPUT FORMAT (Return ONLY JSON):
         {{
             "flagged": true,
-            "category": "Market Manipulation",
-            "confidence": 0.95,
-            "reason": "Description of intent",
-            "evidence_line": "The exact quote from the email"
+            "category": "Name of Category",
+            "confidence": 0.0 to 1.0,
+            "reason": "Brief explanation of intent",
+            "evidence_line": "Exact quote from email/subject triggering flag"
         }}
         """
 
-        headers = {
-            "Content-Type": "application/json",
-            "api-key": self.api_key
-        }
-        
         payload = {
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0  # Deterministic output
+            "temperature": 0
         }
 
         try:
-            response = requests.post(self.endpoint, headers=headers, json=payload, timeout=20)
+            # Using pooled session for speed
+            response = self.session.post(self.endpoint, json=payload, timeout=20)
             response.raise_for_status()
             
-            # Extract content
             raw_content = response.json()['choices'][0]['message']['content'].strip()
             
-            # --- ROBUST JSON SANITIZATION ---
-            # Remove Markdown code blocks if the LLM wrapped the JSON in ```json ... ```
-            if raw_content.startswith("```"):
-                # Split by backticks and find the block that looks like JSON
-                parts = raw_content.split("```")
-                for part in parts:
-                    clean_part = part.strip()
-                    if clean_part.startswith("json"):
-                        clean_part = clean_part[4:].strip()
-                    if clean_part.startswith("{"):
-                        raw_content = clean_part
-                        break
-            
-            # Further cleaning to ensure no text exists before or after the JSON object
+            # --- ROBUST SANITIZATION ---
+            # Remove markdown blocks and extract only the JSON part
             start_idx = raw_content.find("{")
             end_idx = raw_content.rfind("}")
             if start_idx != -1 and end_idx != -1:
-                raw_content = raw_content[start_idx : end_idx + 1]
-
-            return raw_content
-
-        except Exception as e:
-            print(f"Error in LLM Processing: {e}")
+                clean_json = raw_content[start_idx : end_idx + 1]
+                result = json.loads(clean_json)
+                
+                # If violation found, calculate priority and attach original index
+                if result.get("flagged"):
+                    result['priority'] = self.calculate_priority(
+                        result.get('category'), 
+                        result.get('confidence', 0)
+                    )
+                    result['original_index'] = idx
+                    return result
             return None
+            
+        except Exception as e:
+            # Silently handle errors in batch to prevent the whole thread from crashing
+            return {"error": str(e), "original_index": idx}
 
     def calculate_priority(self, category, confidence):
-        """Calculates final score based on Priority Matrix."""
+        """Calculates score: Category Weight * AI Confidence."""
         weight = self.matrix.get(category, 1)
-        return round(weight * confidence, 2)
+        # Handle cases where confidence might be missing or non-numeric
+        try:
+            conf = float(confidence)
+        except:
+            conf = 0.5
+        return round(weight * conf, 2)
