@@ -4,7 +4,7 @@ import re
 import requests
 from dotenv import load_dotenv
 
-# Load environment variables from .env
+# Load Environment Variables
 load_dotenv()
 
 class ComplianceEngine:
@@ -13,14 +13,14 @@ class ComplianceEngine:
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
         
-        # 2. Connection Pooling: Keeps connection open for high-speed batching
+        # 2. Connection Pooling (Critical for speed in 5000+ data processing)
         self.session = requests.Session()
         self.session.headers.update({
             "Content-Type": "application/json",
             "api-key": self.api_key
         })
         
-        # 3. Priority Matrix Weightage
+        # 3. Compliance Priority Matrix (Weightage)
         self.matrix = {
             "Market Manipulation": 10,
             "Insider Trading": 10,
@@ -31,62 +31,83 @@ class ComplianceEngine:
             "Compliant": 0
         }
 
-    # --- STAGE 1: PRE-FILTERING (Must have self, subject, body) ---
+    def _sanitize_json(self, text):
+        """Helper to extract JSON from LLM string responses."""
+        try:
+            start_idx = text.find("{")
+            end_idx = text.rfind("}")
+            if start_idx != -1 and end_idx != -1:
+                return json.loads(text[start_idx : end_idx + 1])
+            return None
+        except:
+            return None
+
+    # --- NEW: AI RAW TEXT PARSER ---
+    def extract_subject_body(self, raw_text):
+        """
+        Uses AI to intelligently split a single block of pasted email 
+        text into 'Subject' and 'Body' fields.
+        """
+        prompt = f"""
+        Act as an email parser. Extract the Subject and Body from the text below.
+        If no subject is found, summarize the main point in 5 words for the subject.
+        
+        RAW EMAIL TEXT:
+        \"\"\"{raw_text}\"\"\"
+
+        Return ONLY a JSON object:
+        {{"subject": "...", "body": "..."}}
+        """
+        payload = {"messages": [{"role": "user", "content": prompt}], "temperature": 0}
+        
+        try:
+            response = self.session.post(self.endpoint, json=payload, timeout=10)
+            res_data = response.json()['choices'][0]['message']['content']
+            parsed = self._sanitize_json(res_data)
+            return parsed if parsed else {"subject": "Unknown", "body": raw_text}
+        except:
+            return {"subject": "Unknown", "body": raw_text}
+
+    # --- STAGE 1: PRE-FILTERING (Local) ---
     def pre_filter(self, subject, body):
-        """Identifies automated noise, newsletters, and system messages locally."""
-        noise_patterns = [
-            r"unsubscribe", r"automatic reply", r"out of office", 
-            r"newsletter", r"mailing list", r"noreply@", r"system alert"
-        ]
-        # Combine subject and body into one string for scanning
+        """Identifies automated noise locally (No LLM cost)."""
+        noise_patterns = [r"unsubscribe", r"automatic reply", r"newsletter", r"out of office", r"noreply@"]
         text_to_scan = f"{str(subject)} {str(body)}".lower()
         return any(re.search(pattern, text_to_scan) for pattern in noise_patterns)
 
-    # --- STAGE 2: HEURISTIC & BEHAVIOURAL SCREENING ---
-    def heuristic_score(self, email_data):
-        """Checks for behavioral anomalies like external domains."""
-        score = 0.0
-        receiver = str(email_data.get('receiver', '')).lower()
-        # Flag if receiver is outside the bank
-        if receiver and not receiver.endswith('@yourbank.com'):
-            score += 0.5
-        return score
-
-    # --- STAGE 3: ML RISK SCORING (Must have self, subject, body) ---
+    # --- STAGE 2: ML RISK SCORING (Local) ---
     def ml_risk_scoring(self, subject, body):
-        """Fast preliminary Intent check to see if an LLM call is needed."""
-        risk_keywords = [
-            "guarantee", "off the record", "delete this", "wire transfer", 
-            "allocation", "favorable", "confidential", "bonus", "inside info"
-        ]
+        """Preliminary risk check locally."""
+        risk_keywords = ["guarantee", "off the record", "delete this", "wire", "allocation", "favorable", "inside info"]
         text_to_scan = f"{str(subject)} {str(body)}".lower()
         count = sum(1 for word in risk_keywords if word in text_to_scan)
-        # Returns a score between 0.0 and 1.0
         return min(count * 0.4, 1.0)
 
-    # --- STAGE 4: LLM REASONING (Thread-Safe for Parallel Processing) ---
+    # --- STAGE 3: LLM REASONING & EXTRACTION ---
     def analyze_single_llm_call(self, data_tuple):
         """
-        Executes the LLM reasoning for a single email. 
-        data_tuple expected: (index, context, subject, body)
+        Final reasoning layer. Extracts intent, reason, and source line.
+        data_tuple: (index, context, subject, body)
         """
         idx, context, subject, body = data_tuple
         
         prompt = f"""
         Act as a Banking Compliance Surveillance Officer. 
-        Analyze the following email for malicious intent.
+        Analyze the intent of this communication.
         
-        CONTEXT (Conversation History): {context}
         SUBJECT: {subject}
-        EMAIL BODY: {body}
+        BODY: {body}
+        CONTEXT: {context}
 
-        Return ONLY a JSON object with these keys:
+        Check for: Market Manipulation, Quid Pro Quo, Insider Trading, Front Running, Secrecy.
+        
+        Return ONLY JSON:
         {{
-            "flagged": boolean,
-            "category": "Market Manipulation / Quid Pro Quo / Insider Trading / Front Running / Secrecy",
+            "flagged": true/false,
+            "category": "...",
             "confidence": 0.0 to 1.0,
-            "reason": "explanation",
-            "evidence_line": "exact quote"
+            "reason": "Identify the specific malicious intent",
+            "evidence_line": "Extract the EXACT line from the email"
         }}
         """
 
@@ -96,41 +117,24 @@ class ComplianceEngine:
         }
 
         try:
-            # POST using the shared session
             response = self.session.post(self.endpoint, json=payload, timeout=20)
-            response.raise_for_status()
+            raw_content = response.json()['choices'][0]['message']['content']
+            result = self._sanitize_json(raw_content)
             
-            raw_content = response.json()['choices'][0]['message']['content'].strip()
-            
-            # --- ROBUST JSON EXTRACTION ---
-            # Find the first { and last } to strip away any LLM intro/outro text
-            start_idx = raw_content.find("{")
-            end_idx = raw_content.rfind("}")
-            
-            if start_idx != -1 and end_idx != -1:
-                clean_json = raw_content[start_idx : end_idx + 1]
-                result = json.loads(clean_json)
-                
-                # If the AI flagged it, calculate priority and keep track of the row index
-                if result.get("flagged"):
-                    result['priority'] = self.calculate_priority(
-                        result.get('category'), 
-                        result.get('confidence', 0)
-                    )
-                    result['original_index'] = idx
-                    return result
+            if result and result.get("flagged"):
+                # Apply priority weightage
+                result['priority'] = self.calculate_priority(result.get('category'), result.get('confidence', 0))
+                result['original_index'] = idx
+                return result
             return None
-            
         except Exception as e:
-            # Log error internally and return None so batch processing continues
-            print(f"LLM Error on row {idx}: {e}")
             return None
 
     def calculate_priority(self, category, confidence):
-        """Calculates Priority Score: Matrix Weight * AI Confidence Score."""
+        """Priority = Matrix Weight * AI Confidence."""
         weight = self.matrix.get(category, 1)
         try:
             conf = float(confidence)
-        except (TypeError, ValueError):
-            conf = 0.5 # Default if AI fails to provide a valid number
+        except:
+            conf = 0.5
         return round(weight * conf, 2)
