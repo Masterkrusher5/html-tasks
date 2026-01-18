@@ -4,23 +4,23 @@ import re
 import requests
 from dotenv import load_dotenv
 
-# Load Environment Variables
+# Load environment variables from .env
 load_dotenv()
 
 class ComplianceEngine:
     def __init__(self):
-        # Configuration from .env
+        # 1. API Configuration
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
         
-        # 1. Connection Pooling: Faster than making new requests for every email
+        # 2. Connection Pooling: Keeps connection open for high-speed batching
         self.session = requests.Session()
         self.session.headers.update({
             "Content-Type": "application/json",
             "api-key": self.api_key
         })
         
-        # 2. Predefined Priority Matrix (Weightage)
+        # 3. Priority Matrix Weightage
         self.matrix = {
             "Market Manipulation": 10,
             "Insider Trading": 10,
@@ -31,62 +31,62 @@ class ComplianceEngine:
             "Compliant": 0
         }
 
-    # --- STAGE 1: PRE-FILTERING (Ultra Fast) ---
+    # --- STAGE 1: PRE-FILTERING (Must have self, subject, body) ---
     def pre_filter(self, subject, body):
         """Identifies automated noise, newsletters, and system messages locally."""
         noise_patterns = [
             r"unsubscribe", r"automatic reply", r"out of office", 
             r"newsletter", r"mailing list", r"noreply@", r"system alert"
         ]
-        # Combine subject and body for a single scan
+        # Combine subject and body into one string for scanning
         text_to_scan = f"{str(subject)} {str(body)}".lower()
         return any(re.search(pattern, text_to_scan) for pattern in noise_patterns)
 
     # --- STAGE 2: HEURISTIC & BEHAVIOURAL SCREENING ---
     def heuristic_score(self, email_data):
-        """Checks for behavioral anomalies (external domains, etc.)."""
+        """Checks for behavioral anomalies like external domains."""
         score = 0.0
         receiver = str(email_data.get('receiver', '')).lower()
-        # Flag if the receiver is not an internal bank employee
+        # Flag if receiver is outside the bank
         if receiver and not receiver.endswith('@yourbank.com'):
             score += 0.5
         return score
 
-    # --- STAGE 3: ML RISK SCORING (Vectorized/Keyword Check) ---
+    # --- STAGE 3: ML RISK SCORING (Must have self, subject, body) ---
     def ml_risk_scoring(self, subject, body):
-        """Preliminary Intent check to see if we should 'spend' an LLM call."""
+        """Fast preliminary Intent check to see if an LLM call is needed."""
         risk_keywords = [
             "guarantee", "off the record", "delete this", "wire transfer", 
             "allocation", "favorable", "confidential", "bonus", "inside info"
         ]
         text_to_scan = f"{str(subject)} {str(body)}".lower()
         count = sum(1 for word in risk_keywords if word in text_to_scan)
-        # Returns a normalized score 0.0 - 1.0
+        # Returns a score between 0.0 and 1.0
         return min(count * 0.4, 1.0)
 
-    # --- STAGE 4: LLM REASONING (Thread-Safe for Parallel Batching) ---
+    # --- STAGE 4: LLM REASONING (Thread-Safe for Parallel Processing) ---
     def analyze_single_llm_call(self, data_tuple):
         """
-        Designed for parallel execution via ThreadPoolExecutor.
-        data_tuple: (index, context, subject, body)
+        Executes the LLM reasoning for a single email. 
+        data_tuple expected: (index, context, subject, body)
         """
         idx, context, subject, body = data_tuple
         
         prompt = f"""
         Act as a Banking Compliance Surveillance Officer. 
-        Analyze the following email for malicious intent (Market Manipulation, Quid Pro Quo, etc.).
+        Analyze the following email for malicious intent.
         
         CONTEXT (Conversation History): {context}
         SUBJECT: {subject}
         EMAIL BODY: {body}
 
-        OUTPUT FORMAT (Return ONLY JSON):
+        Return ONLY a JSON object with these keys:
         {{
-            "flagged": true,
-            "category": "Name of Category",
+            "flagged": boolean,
+            "category": "Market Manipulation / Quid Pro Quo / Insider Trading / Front Running / Secrecy",
             "confidence": 0.0 to 1.0,
-            "reason": "Brief explanation of intent",
-            "evidence_line": "Exact quote from email/subject triggering flag"
+            "reason": "explanation",
+            "evidence_line": "exact quote"
         }}
         """
 
@@ -96,21 +96,22 @@ class ComplianceEngine:
         }
 
         try:
-            # Using pooled session for speed
+            # POST using the shared session
             response = self.session.post(self.endpoint, json=payload, timeout=20)
             response.raise_for_status()
             
             raw_content = response.json()['choices'][0]['message']['content'].strip()
             
-            # --- ROBUST SANITIZATION ---
-            # Remove markdown blocks and extract only the JSON part
+            # --- ROBUST JSON EXTRACTION ---
+            # Find the first { and last } to strip away any LLM intro/outro text
             start_idx = raw_content.find("{")
             end_idx = raw_content.rfind("}")
+            
             if start_idx != -1 and end_idx != -1:
                 clean_json = raw_content[start_idx : end_idx + 1]
                 result = json.loads(clean_json)
                 
-                # If violation found, calculate priority and attach original index
+                # If the AI flagged it, calculate priority and keep track of the row index
                 if result.get("flagged"):
                     result['priority'] = self.calculate_priority(
                         result.get('category'), 
@@ -121,15 +122,15 @@ class ComplianceEngine:
             return None
             
         except Exception as e:
-            # Silently handle errors in batch to prevent the whole thread from crashing
-            return {"error": str(e), "original_index": idx}
+            # Log error internally and return None so batch processing continues
+            print(f"LLM Error on row {idx}: {e}")
+            return None
 
     def calculate_priority(self, category, confidence):
-        """Calculates score: Category Weight * AI Confidence."""
+        """Calculates Priority Score: Matrix Weight * AI Confidence Score."""
         weight = self.matrix.get(category, 1)
-        # Handle cases where confidence might be missing or non-numeric
         try:
             conf = float(confidence)
-        except:
-            conf = 0.5
+        except (TypeError, ValueError):
+            conf = 0.5 # Default if AI fails to provide a valid number
         return round(weight * conf, 2)
