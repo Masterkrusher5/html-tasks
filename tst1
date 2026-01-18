@@ -2,66 +2,131 @@ import os
 import json
 import re
 import requests
-import pandas as pd
 from dotenv import load_dotenv
 
+# Load Environment Variables from .env file
 load_dotenv()
 
 class ComplianceEngine:
     def __init__(self):
+        # Configuration
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
+        
+        # 3. Predefined Matrix Weightage
         self.matrix = {
             "Market Manipulation": 10,
             "Insider Trading": 10,
             "Quid Pro Quo": 9,
             "Front Running": 9,
             "Secrecy": 7,
-            "Policy Violation": 3
+            "Policy Violation": 3,
+            "Compliant": 0
         }
 
+    # --- STAGE 1: PRE-FILTERING (Kill False Positives/Noise) ---
     def pre_filter(self, text):
-        """Layer 1: Heuristic Noise Filter"""
-        noise = ["unsubscribe", "automatic reply", "newsletter", "meeting invite"]
-        return any(word in text.lower() for word in noise)
+        """Identifies automated noise, newsletters, and system messages."""
+        noise_patterns = [
+            r"unsubscribe", r"automatic reply", r"out of office", 
+            r"newsletter", r"mailing list", r"noreply@", r"system alert"
+        ]
+        text_lower = text.lower()
+        return any(re.search(pattern, text_lower) for pattern in noise_patterns)
 
+    # --- STAGE 2: HEURISTIC & BEHAVIOURAL SCREENING ---
     def heuristic_score(self, email_data):
-        """Layer 2: Behavioural Screening"""
-        score = 0
-        # Flag external domains
-        if not email_data['receiver'].endswith('@yourbank.com'):
+        """Checks for behavioral anomalies (external domains, etc.)."""
+        score = 0.0
+        # Flag if the receiver is not an internal bank employee
+        if not email_data.get('receiver', '').lower().endswith('@yourbank.com'):
             score += 0.5
-        # Flag 'off-hours' (Simulated)
-        score += 0.2 
         return score
 
+    # --- STAGE 3: ML RISK SCORING (Preliminary Intent Check) ---
     def ml_risk_scoring(self, text):
-        """Layer 3: Simple Vector/Keyword Intent Score"""
-        risk_words = ["guarantee", "private", "delete this", "wire", "allocation"]
-        count = sum(1 for word in risk_words if word in text.lower())
-        return min(count * 0.2, 1.0)
+        """Simulates DL Intent check by looking for high-risk clusters."""
+        risk_keywords = [
+            "guarantee", "off the record", "delete this", 
+            "wire transfer", "allocation", "favorable", "confidential"
+        ]
+        text_lower = text.lower()
+        count = sum(1 for word in risk_keywords if word in text_lower)
+        # Return a normalized score between 0 and 1
+        return min(count * 0.4, 1.0)
 
+    # --- STAGE 4: LLM REASONING & EXTRACTION ---
     def analyze_with_llm(self, context, current_email):
-        """Layer 4: DL Intent & LLM Reasoning"""
+        """
+        Final reasoning layer. Uses LLM to extract evidence and 
+        categorize based on context.
+        """
         prompt = f"""
-        Analyze this bank communication for compliance.
-        CONTEXT: {context}
-        EMAIL: {current_email}
+        Act as a Banking Compliance Surveillance Officer. 
+        Analyze the following email in the context of the conversation history.
 
-        Return ONLY a JSON object:
+        CONTEXT (Previous Messages): {context}
+        CURRENT EMAIL: {current_email}
+
+        TASK:
+        1. Identify if there is potential non-compliant intent.
+        2. Assign a category from this list: {list(self.matrix.keys())}.
+        3. Extract the exact 'Source Line' that is suspicious.
+        4. Provide a reasoning for your decision.
+
+        OUTPUT FORMAT (Return ONLY valid JSON):
         {{
-            "flagged": true/false,
-            "category": "Category from Matrix",
-            "confidence": 0.0 to 1.0,
-            "reason": "Short explanation",
-            "evidence_line": "Exact quote from email"
+            "flagged": true,
+            "category": "Market Manipulation",
+            "confidence": 0.95,
+            "reason": "Description of intent",
+            "evidence_line": "The exact quote from the email"
         }}
         """
-        headers = {"Content-Type": "application/json", "api-key": self.api_key}
-        payload = {"messages": [{"role": "user", "content": prompt}], "temperature": 0}
+
+        headers = {
+            "Content-Type": "application/json",
+            "api-key": self.api_key
+        }
         
+        payload = {
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0  # Deterministic output
+        }
+
         try:
-            response = requests.post(self.endpoint, headers=headers, json=payload, timeout=10)
-            return response.json()['choices'][0]['message']['content']
-        except:
+            response = requests.post(self.endpoint, headers=headers, json=payload, timeout=20)
+            response.raise_for_status()
+            
+            # Extract content
+            raw_content = response.json()['choices'][0]['message']['content'].strip()
+            
+            # --- ROBUST JSON SANITIZATION ---
+            # Remove Markdown code blocks if the LLM wrapped the JSON in ```json ... ```
+            if raw_content.startswith("```"):
+                # Split by backticks and find the block that looks like JSON
+                parts = raw_content.split("```")
+                for part in parts:
+                    clean_part = part.strip()
+                    if clean_part.startswith("json"):
+                        clean_part = clean_part[4:].strip()
+                    if clean_part.startswith("{"):
+                        raw_content = clean_part
+                        break
+            
+            # Further cleaning to ensure no text exists before or after the JSON object
+            start_idx = raw_content.find("{")
+            end_idx = raw_content.rfind("}")
+            if start_idx != -1 and end_idx != -1:
+                raw_content = raw_content[start_idx : end_idx + 1]
+
+            return raw_content
+
+        except Exception as e:
+            print(f"Error in LLM Processing: {e}")
             return None
+
+    def calculate_priority(self, category, confidence):
+        """Calculates final score based on Priority Matrix."""
+        weight = self.matrix.get(category, 1)
+        return round(weight * confidence, 2)
