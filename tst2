@@ -12,7 +12,7 @@ st.set_page_config(
 )
 
 # Initialize the Compliance Engine
-# Ensure ComplianceEngine.py is in the same folder
+# This uses st.cache_resource so the model configuration doesn't reload on every click
 @st.cache_resource
 def get_engine():
     return ComplianceEngine()
@@ -20,84 +20,81 @@ def get_engine():
 engine = get_engine()
 
 # --- SESSION STATE INITIALIZATION ---
+# Session state keeps data alive while you switch tabs
 if 'alerts' not in st.session_state:
     st.session_state.alerts = []
 if 'thread_history' not in st.session_state:
-    st.session_state.thread_history = {} # Key: Thread_ID, Value: List of bodies
+    st.session_state.thread_history = {} # Store: {thread_id: [list of messages]}
 
-# --- SIDEBAR ---
-st.sidebar.title("Surveillance Settings")
-risk_threshold = st.sidebar.slider("ML Risk Trigger Threshold", 0.0, 1.0, 0.4, 
-                                  help="Only emails exceeding this score will trigger the expensive LLM layer.")
+# --- SIDEBAR SETTINGS ---
+st.sidebar.title("🛠️ System Settings")
+risk_threshold = st.sidebar.slider(
+    "LLM Trigger Threshold", 
+    min_value=0.0, max_value=1.0, value=0.4, step=0.05,
+    help="Determines the sensitivity. A lower threshold means more emails are sent to the AI for deep reasoning."
+)
+
 st.sidebar.divider()
-st.sidebar.info("""
-**Compliance Matrix Weights:**
-- Market Manipulation: 10
-- Insider Trading: 10
-- Quid Pro Quo: 9
-- Front Running: 9
-- Secrecy: 7
-- Policy Violation: 3
-""")
+st.sidebar.subheader("Compliance Matrix")
+matrix_data = pd.DataFrame(list(engine.matrix.items()), columns=['Category', 'Weight'])
+st.sidebar.table(matrix_data)
 
 # --- MAIN UI ---
-st.title("🛡️ AI-Driven Communication Surveillance System")
-st.markdown("Automated detection of Market Manipulation, Quid Pro Quo, and Insider Trading.")
+st.title("🛡️ AI-Driven Communication Surveillance")
+st.markdown("Automated monitoring for Market Manipulation, Quid Pro Quo, and Insider Trading.")
 
-tab1, tab2, tab3 = st.tabs(["🕒 Real-time Monitor", "📂 Batch Processing", "📊 Alert Dashboard"])
+tab1, tab2, tab3 = st.tabs(["🕒 Real-time Monitor", "📂 Batch Ingestion", "📊 Alert Dashboard"])
 
 # --- TAB 1: REAL-TIME MONITOR ---
 with tab1:
-    st.subheader("Manual Email Analysis")
+    st.subheader("Single Email Analysis")
     
-    with st.form("email_input_form"):
-        col1, col2 = st.columns(2)
-        sender = col1.text_input("Sender Email", value="employee@bank.com")
-        receiver = col2.text_input("External Receiver", value="client@hedgefund.com")
-        thread_id = st.text_input("Conversation Thread ID", value="TR-9901")
-        body = st.text_area("Email Content", height=150, placeholder="Type or paste the email content here...")
+    with st.form("manual_input_form"):
+        c1, c2 = st.columns(2)
+        sender = c1.text_input("Sender Email", value="employee@bank.com")
+        receiver = c2.text_input("External Party", value="trader@external.com")
+        thread_id = st.text_input("Thread ID (Conversation Group)", value="TR-100")
+        body = st.text_area("Email Content", height=150)
         
-        submitted = st.form_submit_button("Run Compliance Pipeline")
+        submitted = st.form_submit_button("Run Analysis")
 
     if submitted:
-        if not body:
-            st.error("Please enter email content.")
+        if not body.strip():
+            st.error("Please provide email content.")
         else:
-            with st.status("Running Surveillance Pipeline...", expanded=True) as status:
+            with st.status("Processing Surveillance Layers...", expanded=True) as status:
                 
-                # 1. Thread Reconstruction & Context
-                st.write("🔍 Reconstructing conversation context...")
-                context_list = st.session_state.thread_history.get(thread_id, [])
-                context_text = " | ".join(context_list[-3:]) # Get last 3 messages
+                # 1. THREAD RECONSTRUCTION
+                st.write("🔄 Fetching conversation context...")
+                past_messages = st.session_state.thread_history.get(thread_id, [])
+                context_text = " | ".join(past_messages[-3:]) # Last 3 messages for context
                 
-                # 2. Pre-Filtering
-                st.write("🧹 Running Pre-filters (Noise Reduction)...")
+                # 2. PRE-FILTERING
+                st.write("🧹 Layer 1: Heuristic Noise Filter...")
                 if engine.pre_filter(body):
-                    st.warning("Email filtered: Identified as non-substantive noise (Newsletter/Auto-reply).")
-                    status.update(label="Analysis Stopped: Noise Detected", state="complete")
+                    st.warning("Email flagged as Noise (Newsletter/System). Stopped.")
+                    status.update(label="Complete: Noise Filtered", state="complete")
                 else:
-                    # 3. Heuristic & ML Scoring
-                    st.write("📈 Calculating Heuristic & Behavioural Risk...")
+                    # 3. ML RISK SCORING
+                    st.write("📈 Layer 2: ML Behavioral & Intent Scoring...")
                     h_score = engine.heuristic_score({'sender': sender, 'receiver': receiver})
                     ml_score = engine.ml_risk_scoring(body)
-                    total_risk = (h_score + ml_score)
+                    combined_risk = h_score + ml_score
                     
-                    st.write(f"Preliminary Risk Score: **{total_risk:.2f}**")
+                    st.write(f"Combined Risk Score: **{combined_risk:.2f}**")
                     
-                    if total_risk >= risk_threshold:
-                        # 4. LLM Intent Analysis
-                        st.write("🤖 Triggering LLM Intent Analysis & Reasoning...")
-                        raw_llm_output = engine.analyze_with_llm(context_text, body)
+                    if combined_risk >= risk_threshold:
+                        # 4. LLM DEEP REASONING
+                        st.write("🤖 Layer 3: AI Intent Reasoning & Evidence Extraction...")
+                        raw_json = engine.analyze_with_llm(context_text, body)
                         
-                        if raw_llm_output:
+                        if raw_json:
                             try:
-                                res = json.loads(raw_llm_output)
-                                
+                                res = json.loads(raw_json)
                                 if res.get("flagged"):
-                                    # Calculate Priority based on Matrix
                                     p_score = engine.calculate_priority(res['category'], res['confidence'])
                                     
-                                    alert = {
+                                    new_alert = {
                                         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                         "sender": sender,
                                         "receiver": receiver,
@@ -106,94 +103,119 @@ with tab1:
                                         "reason": res['reason'],
                                         "evidence": res['evidence_line']
                                     }
-                                    st.session_state.alerts.insert(0, alert)
+                                    st.session_state.alerts.insert(0, new_alert)
                                     
-                                    # Update Thread History
+                                    # Update context for future emails in this thread
                                     if thread_id not in st.session_state.thread_history:
                                         st.session_state.thread_history[thread_id] = []
                                     st.session_state.thread_history[thread_id].append(body)
                                     
-                                    st.error(f"High Risk Detected: {res['category']} (Priority: {p_score})")
-                                    st.json(res)
+                                    st.error(f"🚨 ALERT: {res['category']} detected!")
+                                    st.info(f"**Reason:** {res['reason']}")
+                                    st.warning(f"**Evidence:** {res['evidence_line']}")
                                 else:
-                                    st.success("No malicious intent identified by AI reasoning.")
+                                    st.success("AI Analysis: No non-compliant intent detected.")
                             except Exception as e:
                                 st.error(f"Error parsing AI response: {e}")
                         else:
-                            st.error("LLM Service unavailable.")
+                            st.error("AI service timed out. Check endpoint connection.")
                     else:
-                        st.info("Risk score below threshold. No further analysis required.")
+                        st.info("Risk score below threshold. No further action needed.")
                     
-                    status.update(label="Pipeline Analysis Complete", state="complete")
+                    status.update(label="Analysis Finished", state="complete")
 
-# --- TAB 2: BATCH PROCESSING ---
+# --- TAB 2: BATCH INGESTION (WITH COLUMN MAPPING) ---
 with tab2:
-    st.subheader("Ingest Bulk Communications")
-    st.write("Upload a .csv or .xlsx file containing columns: `sender`, `receiver`, `body`, and `thread_id`.")
-    
-    uploaded_file = st.file_uploader("Choose file", type=['csv', 'xlsx'])
+    st.subheader("Process Historical Data (CSV/Excel)")
+    uploaded_file = st.file_uploader("Upload data", type=['csv', 'xlsx'])
     
     if uploaded_file:
         df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-        st.write(f"Total records found: {len(df)}")
+        st.success(f"File loaded! Found {len(df)} rows.")
         
-        if st.button("Start Batch Analysis"):
-            results = []
-            progress_bar = st.progress(0)
+        # COLUMN MAPPING
+        st.write("### Map Your Columns")
+        col_list = df.columns.tolist()
+        
+        c1, c2, c3, c4 = st.columns(4)
+        # We try to guess the column names, otherwise user picks
+        body_col = c1.selectbox("Content/Body *", options=col_list, index=0 if 'body' not in col_list else col_list.index('body'))
+        sender_col = c2.selectbox("Sender", options=col_list, index=0 if 'sender' not in col_list else col_list.index('sender'))
+        receiver_col = c3.selectbox("Receiver", options=col_list, index=0 if 'receiver' not in col_list else col_list.index('receiver'))
+        thread_col = c4.selectbox("Thread ID", options=col_list, index=0 if 'thread_id' not in col_list else col_list.index('thread_id'))
+
+        if st.button("🚀 Process Batch"):
+            batch_results = []
+            prog = st.progress(0)
+            status_msg = st.empty()
             
             for i, row in df.iterrows():
-                # Rapid pipeline processing
-                if not engine.pre_filter(row['body']):
-                    ml_s = engine.ml_risk_scoring(row['body'])
-                    if ml_s >= risk_threshold:
-                        # Call LLM
-                        raw = engine.analyze_with_llm("Batch process", row['body'])
-                        if raw:
-                            data = json.loads(raw)
-                            if data.get("flagged"):
-                                data['priority'] = engine.calculate_priority(data['category'], data['confidence'])
-                                data['sender'] = row['sender']
-                                results.append(data)
+                # Safe Extraction
+                msg_body = str(row[body_col])
                 
-                progress_bar.progress((i + 1) / len(df))
+                status_msg.text(f"Scanning email {i+1} of {len(df)}...")
+                
+                # Run Fast Filter
+                if not engine.pre_filter(msg_body):
+                    # Run ML Score
+                    if engine.ml_risk_scoring(msg_body) >= risk_threshold:
+                        # Deep Scan
+                        raw = engine.analyze_with_llm("Batch Scan", msg_body)
+                        if raw:
+                            try:
+                                data = json.loads(raw)
+                                if data.get("flagged"):
+                                    data['priority'] = engine.calculate_priority(data['category'], data['confidence'])
+                                    data['sender'] = row[sender_col]
+                                    data['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    batch_results.append(data)
+                                    st.session_state.alerts.insert(0, data)
+                            except:
+                                continue
+                
+                prog.progress((i + 1) / len(df))
             
-            st.success(f"Batch Processing Finished. Found {len(results)} high-risk alerts.")
-            if results:
-                res_df = pd.DataFrame(results)
-                st.dataframe(res_df[['priority', 'category', 'reason', 'evidence_line']])
-                st.download_button("Download Alert Report", res_df.to_csv(index=False), "compliance_alerts.csv")
+            status_msg.text("Batch processing complete.")
+            
+            if batch_results:
+                st.warning(f"Found {len(batch_results)} violations!")
+                st.dataframe(pd.DataFrame(batch_results))
+            else:
+                st.success("No violations found in this file.")
 
 # --- TAB 3: DASHBOARD ---
 with tab3:
-    st.subheader("Compliance Officer Dashboard")
+    st.subheader("Compliance Review Queue")
     
     if not st.session_state.alerts:
-        st.info("No alerts generated yet.")
+        st.info("The review queue is currently empty.")
     else:
-        # Metrics
-        df_alerts = pd.DataFrame(st.session_state.alerts)
+        df_all = pd.DataFrame(st.session_state.alerts)
+        
+        # Metrics Row
         m1, m2, m3 = st.columns(3)
-        m1.metric("Total Alerts", len(df_alerts))
-        m2.metric("Critical Alerts (Score > 8)", len(df_alerts[df_alerts['priority'] >= 8]))
-        m3.metric("Most Frequent Violation", df_alerts['category'].mode()[0] if not df_alerts.empty else "N/A")
+        m1.metric("Active Alerts", len(df_all))
+        m2.metric("Critical Risks (>8.0)", len(df_all[df_all['priority'] >= 8]))
+        m3.metric("Avg Priority Score", round(df_all['priority'].mean(), 1))
         
         st.divider()
-        
-        # Sortable Table
-        st.write("### Review Queue (Sorted by Priority)")
-        # Make the priority column the focus
-        df_display = df_alerts.sort_values(by="priority", ascending=False)
+
+        # Alert Table with Formatting
+        st.write("### Flagged Communications")
+        df_all = df_all.sort_values(by="priority", ascending=False)
         
         st.dataframe(
-            df_display,
+            df_all,
             column_config={
-                "priority": st.column_config.ProgressColumn("Priority Score", min_value=0, max_value=10, format="%.2f"),
-                "evidence": st.column_config.TextColumn("Extracted Evidence", width="large")
+                "priority": st.column_config.ProgressColumn("Priority", min_value=0, max_value=10, format="%.1f"),
+                "timestamp": "Time Detected",
+                "category": "Violation Category",
+                "evidence": st.column_config.TextColumn("Key Evidence", width="large")
             },
-            use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            use_container_width=True
         )
 
-        if st.button("Clear Alert History"):
+        if st.button("🗑️ Clear All Alerts"):
             st.session_state.alerts = []
             st.rerun()
