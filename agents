@@ -15,8 +15,7 @@ class ValidationRefactoringAgent:
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
         
-        # Connection Pooling: Critical for parallel streaming
-        # pool_maxsize should be >= the number of expected semantic chunks
+        # Connection Pooling: Critical for parallel streaming to avoid bottlenecks
         self.session = requests.Session()
         adapter = requests.adapters.HTTPAdapter(
             pool_connections=50, 
@@ -44,6 +43,7 @@ class ValidationRefactoringAgent:
         }
 
         try:
+            # We use stream=True and a timeout to ensure responsiveness
             with self.session.post(self.endpoint, json=payload, stream=True, timeout=60) as response:
                 response.raise_for_status()
                 
@@ -51,8 +51,8 @@ class ValidationRefactoringAgent:
                     if not line:
                         continue
                     
-                    # Azure sends chunks prefixed with 'data: '
                     line_text = line.decode("utf-8").strip()
+                    # Azure sends chunks prefixed with 'data: '
                     if line_text.startswith("data: "):
                         content_raw = line_text[6:] # Strip 'data: '
                         
@@ -61,21 +61,21 @@ class ValidationRefactoringAgent:
                         
                         try:
                             chunk_json = json.loads(content_raw)
-                            if chunk_json['choices']:
+                            if chunk_json.get('choices'):
                                 delta = chunk_json['choices'][0].get('delta', {})
                                 if 'content' in delta:
                                     yield delta['content']
-                        except json.JSONDecodeError:
+                        except (json.JSONDecodeError, KeyError):
                             continue
         except Exception as e:
             yield f"\n[STREAMING_ERROR: {str(e)}]"
 
-    # --- PROMPT GENERATORS (Separated to allow UI-side streaming control) ---
+    # --- PROMPT GENERATORS (Required by app.py) ---
 
     def get_synthesis_prompt(self, context: str, spec: str, target_tech: str) -> str:
         """Constructs the prompt for Phase 3: Code Synthesis."""
         return f"""
-        TASK: Synthesize modern, clean {target_tech} code from legacy specs.
+        TASK: Synthesize modern, clean {target_tech} code from legacy logic specs.
         
         CONTEXT FROM SHARED LIBRARIES:
         \"\"\"{context}\"\"\"
@@ -87,45 +87,33 @@ class ValidationRefactoringAgent:
         - Use SOLID principles.
         - Implement robust error handling.
         - Output ONLY the code, no conversational filler.
-        - Use modern frameworks (e.g., FastAPI, Spring Boot).
+        - Use modern frameworks (e.g., FastAPI for Python, Spring Boot for Java).
         """
 
     def get_test_prompt(self, modern_code: str, target_tech: str) -> str:
         """Constructs the prompt for Phase 4: Unit Testing."""
         framework = "JUnit 5" if "java" in target_tech.lower() else "pytest"
         return f"""
-        TASK: Generate comprehensive {framework} unit tests for the code below.
+        TASK: Generate comprehensive {framework} unit tests for the modernized code.
         
         CODE TO TEST:
         \"\"\"{modern_code}\"\"\"
         
         INSTRUCTIONS:
         - Test edge cases and primary logic paths.
-        - Mock dependencies where required.
+        - Mock external dependencies where required.
         - Return ONLY the test source code.
         """
 
+    # --- HELPER FOR NON-STREAMING (Synchronous) ---
+    
     def finalize_code_sync(self, context, spec, target_tech):
-        """
-        Non-streaming fallback version for automated processes.
-        Collects the full stream into a single string.
-        """
+        """Collects the full stream into a single string for internal processing."""
         prompt = self.get_synthesis_prompt(context, spec, target_tech)
         full_code = ""
         for chunk in self.stream_llm(prompt):
             full_code += chunk
         return full_code
-
-    def generate_tests_sync(self, modern_code, target_tech):
-        """
-        Non-streaming fallback version for automated processes.
-        Collects the full stream into a single string.
-        """
-        prompt = self.get_test_prompt(modern_code, target_tech)
-        full_tests = ""
-        for chunk in self.stream_llm(prompt):
-            full_tests += chunk
-        return full_tests
 
     # --- PHASE 4: AUTO-CORRECTION (Reflection Loop) ---
     def refine_code_from_feedback(self, code, error_log, target_tech):
