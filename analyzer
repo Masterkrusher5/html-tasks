@@ -1,24 +1,32 @@
-from langchain_openai import AzureChatOpenAI
-from langchain_core.output_parsers import JsonOutputParser
-from langchain.prompts import ChatPromptTemplate
 import os
+from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI # Changed from AzureChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import JsonOutputParser
+
+load_dotenv()
 
 class StaticSemanticAnalyzer:
     def __init__(self):
-        self.llm = AzureChatOpenAI(
-            azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
-            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+        # We use ChatOpenAI because it allows custom base_url 
+        # without requiring Azure-specific deployment/version params
+        self.llm = ChatOpenAI(
+            base_url=os.getenv("LLM_ENDPOINT"), 
+            api_key=os.getenv("LLM_API_KEY"),
+            model="gpt-4", # Often required by the library, but ignored by many gateways
             temperature=0
         )
 
     def generate_graphs(self, code: str, lang: str):
-        """Simulates AST, CFG, and DFG generation using LLM-assisted parsing."""
         prompt = ChatPromptTemplate.from_messages([
-            ("system", f"You are a compiler specialist for {lang}."),
-            ("user", "Analyze the code and return a JSON structure for: "
-                     "1. AST (Tree structure), 2. CFG (Control Flow), 3. DFG (Data Flow).\nCode: {code}")
+            ("system", f"You are a technical architect specializing in {lang} static analysis."),
+            ("user", (
+                "Analyze the following code. Generate a JSON object containing:\n"
+                "1. AST: Key structural nodes.\n"
+                "2. CFG: Control flow paths (loops, branches).\n"
+                "3. DFG: Variable state changes.\n\n"
+                "Code:\n{code}"
+            ))
         ])
         chain = prompt | self.llm | JsonOutputParser()
         return chain.invoke({"code": code})
