@@ -9,15 +9,15 @@ load_dotenv()
 class ValidationRefactoringAgent:
     """
     Phase 3 & 4 Agent: Unified Code Synthesis and Validation.
-    Refactored to generate a single cohesive Vanilla Java class and its 
-    corresponding JUnit 5 tests via high-speed streaming.
+    Supports multi-language conversion (Java, Python, C#, TypeScript) 
+    and handles single-file cohesive transformations.
     """
     def __init__(self):
         # API Configuration
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
         
-        # Connection Pooling optimized for long-duration single-file synthesis
+        # Connection Pooling optimized for high-concurrency and long-duration synthesis
         self.session = requests.Session()
         adapter = requests.adapters.HTTPAdapter(
             pool_connections=20, 
@@ -30,19 +30,20 @@ class ValidationRefactoringAgent:
             "api-key": self.api_key
         })
 
-    def stream_llm(self, prompt: str):
+    def stream_llm(self, prompt: str, target_lang: str):
         """
         Standardized Azure OpenAI SSE (Server-Sent Events) streaming parser.
-        Yields content character-by-character for real-time UI updates.
+        Dynamically adjusts persona based on the target language.
         """
+        # Set specific persona for the target language
+        system_persona = f"You are a Senior {target_lang} Software Architect specializing in legacy modernization."
+        
         payload = {
             "messages": [
                 {
                     "role": "system", 
-                    "content": "You are a Senior Java Modernization Architect. "
-                               "Your goal is to produce clean, production-ready Vanilla Java 17+ code. "
-                               "NEVER use Spring Boot, Spring annotations, or third-party frameworks unless specifically requested. "
-                               "Use only the Java Standard Library (JDK)."
+                    "content": f"{system_persona} Output only high-quality, production-ready source code. "
+                               "Maintain exact business logic and follow modern best practices for the language."
                 },
                 {
                     "role": "user", 
@@ -54,7 +55,7 @@ class ValidationRefactoringAgent:
         }
 
         try:
-            # Setting a longer timeout for large unified file generation
+            # Longer timeout for large unified file generation
             with self.session.post(self.endpoint, json=payload, stream=True, timeout=120) as response:
                 response.raise_for_status()
                 
@@ -64,7 +65,7 @@ class ValidationRefactoringAgent:
                     
                     line_text = line.decode("utf-8").strip()
                     if line_text.startswith("data: "):
-                        content_raw = line_text[6:] # Remove 'data: ' prefix
+                        content_raw = line_text[6:] # Strip 'data: '
                         
                         if content_raw == "[DONE]":
                             break
@@ -81,14 +82,42 @@ class ValidationRefactoringAgent:
         except Exception as e:
             yield f"\n[TRANSFORMATION_ERROR: {str(e)}]"
 
-    # --- PHASE 3: UNIFIED VANILLA JAVA SYNTHESIS ---
+    # --- PHASE 3: UNIFIED CODE SYNTHESIS PROMPT ---
 
-    def get_unified_synthesis_prompt(self, context: str, original_code: str) -> str:
+    def get_unified_synthesis_prompt(self, context: str, original_code: str, target_lang: str) -> str:
         """
-        Constructs the prompt for a single-file Vanilla Java transformation.
+        Builds a language-specific synthesis prompt for unified file generation.
         """
+        # Determine language-specific constraints
+        constraints = ""
+        if "Java" in target_lang:
+            constraints = (
+                "- Use Vanilla Java 17+. \n"
+                "- NO SPRING BOOT: Do not use @Service, @Autowired, etc.\n"
+                "- Use Standard JDK libraries only (java.util, java.math, etc.)."
+            )
+        elif "Python" in target_lang:
+            constraints = (
+                "- Use Python 3.10+.\n"
+                "- Include PEP 484 Type Hints.\n"
+                "- Use Pydantic for data validation if appropriate.\n"
+                "- Maintain idiomatic 'Pythonic' style."
+            )
+        elif "C#" in target_lang:
+            constraints = (
+                "- Use .NET 6/7/8.\n"
+                "- Use File-scoped namespaces and primary constructors if applicable.\n"
+                "- Use C# standard naming conventions."
+            )
+        elif "TypeScript" in target_lang:
+            constraints = (
+                "- Use TypeScript 5+.\n"
+                "- Use ES Modules (import/export).\n"
+                "- Define strict Interfaces/Types for all data structures."
+            )
+
         return f"""
-        TASK: Transform the provided legacy source code into a SINGLE cohesive Vanilla Java class.
+        TASK: Transform the provided legacy source code into a SINGLE cohesive {target_lang} file.
         
         BUSINESS LOGIC SPECIFICATION:
         \"\"\"{context}\"\"\"
@@ -96,49 +125,59 @@ class ValidationRefactoringAgent:
         LEGACY SOURCE CODE:
         \"\"\"{original_code}\"\"\"
         
-        CONSTRAINTS & STANDARDS:
-        1. NO SPRING BOOT: Do not use @Service, @Autowired, @Component, etc.
-        2. NO FRAMEWORKS: Use standard JDK 17+ libraries only (e.g., java.util, java.io, java.math, java.time).
-        3. STRUCTURE: Create a single public class with a meaningful name. 
-        4. DECOUPLING: Convert legacy GOTO or procedural logic into clean methods and proper control structures.
-        5. DATA TYPES: Map legacy types (e.g., COBOL PIC, VB6 Variant) to appropriate Java types (BigDecimal, String, int).
-        6. OUTPUT: Provide ONLY the full .java file content.
+        CONSTRAINTS:
+        {constraints}
+        - Maintain the EXACT business logic and calculation formulas.
+        - Decouple procedural legacy flow into clean, modular methods.
+        - Provide the FULL source code content only.
         """
 
-    # --- PHASE 4: UNIFIED JUNIT 5 TEST GENERATION ---
+    # --- PHASE 4: UNIFIED UNIT TEST PROMPT ---
 
-    def get_unified_test_prompt(self, modern_java_code: str) -> str:
+    def get_unified_test_prompt(self, modern_code: str, target_lang: str) -> str:
         """
-        Constructs the prompt to generate a single comprehensive JUnit 5 test suite.
+        Maps the target language to the appropriate testing framework.
         """
-        return f"""
-        TASK: Generate a single JUnit 5 unit test class for the provided Vanilla Java code.
+        # Framework Mapping
+        framework_map = {
+            "Java": "JUnit 5",
+            "Python": "pytest",
+            "C#": "xUnit",
+            "TypeScript": "Jest",
+            "JavaScript": "Mocha"
+        }
         
-        MODERN JAVA CODE:
-        \"\"\"{modern_java_code}\"\"\"
+        # Extract base name to match framework (e.g., "Python (FastAPI)" -> "Python")
+        base_lang = target_lang.split()[0]
+        framework = framework_map.get(base_lang, "standard testing library")
+        
+        return f"""
+        TASK: Generate a single comprehensive {framework} unit test file for the provided {target_lang} code.
+        
+        CODE TO TEST:
+        \"\"\"{modern_code}\"\"\"
         
         REQUIREMENTS:
-        1. FRAMEWORK: Use JUnit 5 (org.junit.jupiter.api).
-        2. COVERAGE: Include test cases for the main execution path and critical edge cases.
-        3. DATA MOCKING: If the code requires data inputs, provide mock data within the test methods.
-        4. NO SPRING: Use standard Java testing patterns (no @SpringBootTest).
-        5. OUTPUT: Provide ONLY the full JUnit test class code.
+        1. Use {framework} for all assertions.
+        2. Include test cases for success paths and edge cases (e.g., nulls, zero values, boundaries).
+        3. Mock external dependencies (DB/Files) if present in the code.
+        4. Provide the FULL test code content only.
         """
 
     # --- PHASE 4: AUTO-CORRECTION (Reflection Loop) ---
 
-    def refine_unified_code(self, code, error_log):
+    def refine_unified_code(self, code: str, error_log: str, target_lang: str):
         """
-        Refinement agent used if the generated code fails automated checks.
+        Self-correction agent used to fix syntax or logical errors in the generated code.
         """
         prompt = f"""
-        The following Java code failed validation or has syntax errors. 
-        Fix the errors while maintaining the business logic.
+        The following {target_lang} code has errors. 
+        Fix the code while preserving the business logic.
         
         ERROR LOG: {error_log}
         CODE: {code}
         """
         full_refinement = ""
-        for chunk in self.stream_llm(prompt):
+        for chunk in self.stream_llm(prompt, target_lang):
             full_refinement += chunk
         return full_refinement
