@@ -1,32 +1,122 @@
 import os
+import json
+import requests
+import re
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI # Changed from AzureChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import JsonOutputParser
 
+# Load Environment Variables
 load_dotenv()
 
 class StaticSemanticAnalyzer:
+    """
+    Phase 2: Static + Semantic Analyzer.
+    Parses legacy code into logical graphs (AST, CFG, DFG) using direct LLM calls.
+    """
     def __init__(self):
-        # We use ChatOpenAI because it allows custom base_url 
-        # without requiring Azure-specific deployment/version params
-        self.llm = ChatOpenAI(
-            base_url=os.getenv("LLM_ENDPOINT"), 
-            api_key=os.getenv("LLM_API_KEY"),
-            model="gpt-4", # Often required by the library, but ignored by many gateways
-            temperature=0
-        )
+        self.endpoint = os.getenv("LLM_ENDPOINT")
+        self.api_key = os.getenv("LLM_KEY")
+        
+        # Connection setup with working Azure OpenAI headers
+        self.session = requests.Session()
+        self.session.headers.update({
+            "Content-Type": "application/json",
+            "api-key": self.api_key
+        })
+
+    def _sanitize_json(self, text):
+        """
+        Extracts JSON content from the LLM's response, handling potential 
+        conversational filler or markdown code blocks.
+        """
+        try:
+            # Look for the first '{' and the last '}'
+            start_idx = text.find("{")
+            end_idx = text.rfind("}")
+            if start_idx != -1 and end_idx != -1:
+                json_str = text[start_idx : end_idx + 1]
+                return json.loads(json_str)
+            return None
+        except Exception as e:
+            print(f"JSON Parsing Error: {e}")
+            return None
 
     def generate_graphs(self, code: str, lang: str):
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", f"You are a technical architect specializing in {lang} static analysis."),
-            ("user", (
-                "Analyze the following code. Generate a JSON object containing:\n"
-                "1. AST: Key structural nodes.\n"
-                "2. CFG: Control flow paths (loops, branches).\n"
-                "3. DFG: Variable state changes.\n\n"
-                "Code:\n{code}"
-            ))
-        ])
-        chain = prompt | self.llm | JsonOutputParser()
-        return chain.invoke({"code": code})
+        """
+        Step 2: Logic Parsing.
+        Maps code into AST (Structure), CFG (Control Flow), and DFG (Data Flow).
+        """
+        prompt = f"""
+        Act as a Compiler Engineer and Static Analysis Tool. 
+        Analyze the provided {lang} source code and generate a structural mapping.
+
+        INPUT CODE:
+        \"\"\"
+        {code}
+        \"\"\"
+
+        Provide a structured JSON output with the following keys:
+        1. "ast_nodes": A list of key structural components (e.g., VariableDeclaration, IfStatement, Loop).
+        2. "control_flow": A mapping of the logic paths. Identify entry points, branches (true/false paths), and exit points.
+        3. "data_flow": Track the lifecycle of variables. Identify where variables are 'defined', 'modified', and 'read'.
+        4. "complexity_metrics": Calculate Cyclomatic Complexity and nesting depth.
+
+        Return ONLY the JSON object. Do not include explanations.
+        """
+
+        payload = {
+            "messages": [
+                {
+                    "role": "system", 
+                    "content": "You are a specialized tool for legacy code structural analysis. You only output valid JSON."
+                },
+                {
+                    "role": "user", 
+                    "content": prompt
+                }
+            ],
+            "temperature": 0
+        }
+
+        try:
+            response = self.session.post(self.endpoint, json=payload, timeout=40)
+            response.raise_for_status()
+            
+            raw_content = response.json()['choices'][0]['message']['content']
+            analysis_results = self._sanitize_json(raw_content)
+            
+            # If the LLM failed to return structured data, return a fallback structure
+            if not analysis_results:
+                return {
+                    "error": "Failed to parse structural logic",
+                    "ast_nodes": [],
+                    "control_flow": {},
+                    "data_flow": {}
+                }
+                
+            return analysis_results
+
+        except Exception as e:
+            return {
+                "error": str(e),
+                "ast_nodes": [],
+                "control_flow": {},
+                "data_flow": {}
+            }
+
+    def calculate_confidence_score(self, graphs):
+        """
+        Used for Phase 2 Evaluation Dashboard.
+        Calculates a confidence metric based on the completeness of the analysis.
+        """
+        if "error" in graphs:
+            return 0.0
+            
+        # Heuristic: More nodes and flow paths usually indicate a successful parse
+        node_count = len(graphs.get("ast_nodes", []))
+        flow_count = len(graphs.get("control_flow", {}))
+        
+        if node_count > 0 and flow_count > 0:
+            return 0.95
+        elif node_count > 0:
+            return 0.70
+        return 0.30
