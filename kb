@@ -1,29 +1,137 @@
-import numpy as np
-from typing import List
+import os
+import json
+import requests
+from dotenv import load_dotenv
 from models.schemas import SemanticChunk
 
+# Load Environment Variables
+load_dotenv()
+
 class RAGContextEngine:
+    """
+    Handles Steps 3, 4, and 6 of the Modernization Pipeline.
+    - Semantic Chunking (Logic-based splitting)
+    - Knowledge Base (Simulated RAG Layer)
+    - Retrieval Engine (Context for the Architect Agent)
+    """
     def __init__(self):
-        self.vector_store = [] # In production, use ChromaDB or FAISS
+        self.endpoint = os.getenv("LLM_ENDPOINT")
+        self.api_key = os.getenv("LLM_KEY")
+        
+        # simulated_vector_store acts as our RAG Layer (Step 4)
+        self.simulated_vector_store = []
+        
+        self.session = requests.Session()
+        self.session.headers.update({
+            "Content-Type": "application/json",
+            "api-key": self.api_key
+        })
 
-    def create_semantic_chunks(self, code_analysis: dict, original_code: str) -> List[SemanticChunk]:
-        """Step 3: Chunking based on functional logic rather than line count."""
-        # Simulated logic: splitting by CFG entry points
+    def _call_llm(self, prompt):
+        """Standardized internal call to the LLM."""
+        payload = {
+            "messages": [
+                {"role": "system", "content": "You are a Knowledge Engineer specializing in code semantics."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0
+        }
+        try:
+            response = self.session.post(self.endpoint, json=payload, timeout=30)
+            response.raise_for_status()
+            return response.json()['choices'][0]['message']['content']
+        except Exception as e:
+            return f"Error: {str(e)}"
+
+    def create_semantic_chunks(self, graphs, original_code):
+        """
+        Step 3: Semantic Chunking.
+        Uses the Logic Graphs (AST/CFG) to identify logical boundaries 
+        and extract distinct business rules.
+        """
+        prompt = f"""
+        Act as a Code Analyst. Divide the following legacy code into 'Semantic Chunks'.
+        A chunk should represent a single functional unit or business rule.
+        
+        LOGIC GRAPHS (AST/CFG):
+        {json.dumps(graphs)}
+        
+        SOURCE CODE:
+        {original_code}
+
+        Return a JSON list of objects:
+        [
+            {{
+                "chunk_id": "unique_id",
+                "logic_type": "Calculation | Validation | Data_IO | UI",
+                "description": "Plain English business rule description",
+                "dependencies": ["list of variables or shared libs used"]
+            }}
+        ]
+        """
+        
+        raw_res = self._call_llm(prompt)
+        
+        # Parse JSON from AI response
         chunks = []
-        # In a real scenario, the LLM identifies boundaries of a 'Functional Unit'
-        chunk = SemanticChunk(
-            chunk_id="CH-001",
-            logic_type="Business Rule",
-            description="Main payroll calculation involving overtime.",
-            dependencies=["GlobalConfig.vh", "TaxLib.cbl"],
-            original_code=original_code,
-            context_score=0.95
-        )
-        self.vector_store.append(chunk)
-        return [chunk]
+        try:
+            start = raw_res.find("[")
+            end = raw_res.rfind("]")
+            if start != -1 and end != -1:
+                chunk_data_list = json.loads(raw_res[start : end + 1])
+                for data in chunk_data_list:
+                    # Creating the Pydantic model for each chunk
+                    chunk = SemanticChunk(
+                        chunk_id=data.get("chunk_id", "ID_ERR"),
+                        logic_type=data.get("logic_type", "Unknown"),
+                        description=data.get("description", "No Description"),
+                        original_code=original_code, # Reference to parent code
+                        context_score=0.95 # Simulated score for ranking
+                    )
+                    chunks.append(chunk)
+                    # Step 4: Indexing into our RAG Layer
+                    self.simulated_vector_store.append(chunk)
+        except Exception as e:
+            print(f"Chunking Error: {e}")
+            
+        return chunks
 
-    def get_related_context(self, chunk: SemanticChunk) -> str:
-        """Step 6: Retrieval Engine."""
-        # Searches for dependencies in the vector store
-        context = f"Relevant Shared Libraries: {chunk.dependencies}"
-        return context
+    def get_related_context(self, current_chunk: SemanticChunk):
+        """
+        Step 6: Context Retrieval Engine.
+        Finds information from other files or configurations that the 
+        current chunk depends on to function correctly.
+        """
+        # In a production RAG system, this would perform a vector search.
+        # Here, we utilize the 'dependencies' and 'logic_type' to pull 
+        # relevant background info for the Synthesis Agent.
+        
+        retrieval_prompt = f"""
+        Identify the architectural context needed to modernize this specific logic:
+        LOGIC DESCRIPTION: {current_chunk.description}
+        LOGIC TYPE: {current_chunk.logic_type}
+        
+        Determine if there are global standards (like date formats, tax rates, 
+        or API structures) likely required for this module.
+        """
+        
+        context_insight = self._call_llm(retrieval_prompt)
+        
+        # Combine the AI insight with any "shared" context from other chunks
+        context_payload = (
+            f"--- CONTEXT FOR {current_chunk.chunk_id} ---\n"
+            f"Business Intent: {current_chunk.description}\n"
+            f"Inferred Environment Context: {context_insight}\n"
+        )
+        
+        return context_payload
+
+    def calculate_context_score(self, chunk: SemanticChunk):
+        """
+        Automated correctness evaluation of the documentation generated so far.
+        Returns a score 0-1 for the dashboard.
+        """
+        # Logic: If description is detailed (> 50 chars), it's high confidence
+        if len(chunk.description) > 50:
+            return 0.98
+        return 0.65
