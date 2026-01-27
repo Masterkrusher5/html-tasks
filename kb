@@ -1,0 +1,29 @@
+import numpy as np
+from typing import List
+from models.schemas import SemanticChunk
+
+class RAGContextEngine:
+    def __init__(self):
+        self.vector_store = [] # In production, use ChromaDB or FAISS
+
+    def create_semantic_chunks(self, code_analysis: dict, original_code: str) -> List[SemanticChunk]:
+        """Step 3: Chunking based on functional logic rather than line count."""
+        # Simulated logic: splitting by CFG entry points
+        chunks = []
+        # In a real scenario, the LLM identifies boundaries of a 'Functional Unit'
+        chunk = SemanticChunk(
+            chunk_id="CH-001",
+            logic_type="Business Rule",
+            description="Main payroll calculation involving overtime.",
+            dependencies=["GlobalConfig.vh", "TaxLib.cbl"],
+            original_code=original_code,
+            context_score=0.95
+        )
+        self.vector_store.append(chunk)
+        return [chunk]
+
+    def get_related_context(self, chunk: SemanticChunk) -> str:
+        """Step 6: Retrieval Engine."""
+        # Searches for dependencies in the vector store
+        context = f"Relevant Shared Libraries: {chunk.dependencies}"
+        return context
