@@ -6,12 +6,12 @@ from typing import List, Dict, Optional, Any
 class GraphData(BaseModel):
     """
     Represents the Syntactic and Semantic structure extracted in Phase 2.
-    Used to populate the 'Static Analysis' tab in the dashboard.
+    Used to populate the 'Structural Insights' JSON in the dashboard.
     """
-    ast_nodes: List[str] = Field(default_factory=list, description="Structural components like IfStatements or Loops")
-    control_flow: Dict[str, Any] = Field(default_factory=dict, description="Logical paths and branches")
-    data_flow: Dict[str, Any] = Field(default_factory=dict, description="Variable lifecycle (defined/modified/read)")
-    complexity_metrics: Dict[str, int] = Field(default_factory=dict, description="Cyclomatic complexity and nesting depth")
+    ast_nodes: List[str] = Field(default_factory=list, description="Key structural components (Variables, Ifs, Loops)")
+    control_flow: Dict[str, Any] = Field(default_factory=dict, description="Logic paths (Entry, Branches, Exits)")
+    data_flow: Dict[str, Any] = Field(default_factory=dict, description="Variable lifecycle (Define, Modify, Read)")
+    complexity_metrics: Dict[str, Any] = Field(default_factory=dict, description="Cyclomatic complexity and nesting depth")
 
 class LogicStep(BaseModel):
     """Individual transformation steps within a business rule."""
@@ -21,51 +21,64 @@ class LogicStep(BaseModel):
 
 class MicroSpec(BaseModel):
     """
-    The 'Structured Specification' that replaces legacy documentation.
-    Used by the Architect Agent to generate modern code.
+    The structured specification that replaces missing documentation.
+    Used by the Architect Agent to generate runnable code.
     """
     module_name: str
     input_variables: List[str]
     output_variables: List[str]
     business_rules: List[LogicStep]
     edge_cases: List[str]
-    complexity_score: int = Field(ge=1, le=10, description="1-10 rating of original code complexity")
+    complexity_score: int = Field(default=5, ge=1, le=10)
 
 # --- PHASE 2: EVALUATION & DASHBOARDING ---
 
 class EvalReport(BaseModel):
     """
-    The 'Quality Gate' output. 
-    Determines if a module falls into the Green, Amber, or Red zone.
+    The output of the Quality Gate. 
+    Determines the Dashboard Heatmap color (Green/Amber/Red).
     """
-    confidence_score: float = Field(ge=0.0, le=1.0, description="LLM consistency score")
-    discrepancies: List[str] = Field(default_factory=list, description="Differences between code and spec")
+    confidence_score: float = Field(ge=0.0, le=1.0)
+    discrepancies: List[str] = Field(default_factory=list)
     is_hallucination_detected: bool = False
-    manual_review_priority: str = Field(description="Low, Medium, or High based on risk")
+    manual_review_priority: str = Field(default="Medium", description="Low, Medium, or High")
 
 # --- PHASE 3: KNOWLEDGE BASE & CHUNKING ---
 
 class SemanticChunk(BaseModel):
     """
-    Represents a functional unit of code stored in the RAG Knowledge Base.
-    Used for context retrieval in Phase 3.
+    Represents a functional unit of code stored in the Knowledge Base (RAG Layer).
+    Critical for Step 3 (Chunking) and Step 6 (Context Retrieval).
     """
     chunk_id: str
     logic_type: str = Field(description="e.g., Calculation, Validation, Data_IO")
     description: str = Field(description="Plain English summary of the logic intent")
     original_code: str = Field(description="The source snippet for reference")
-    context_score: float = Field(default=0.0, description="Relevance score for retrieval")
-    dependencies: List[str] = Field(default_factory=list, description="Shared libraries or variables needed")
+    context_score: float = Field(default=0.0)
+    dependencies: List[str] = Field(default_factory=list, description="Shared libraries or global variables")
 
 # --- PHASE 4: MODERNIZATION OUTPUT ---
 
 class ModernizationResult(BaseModel):
     """
-    The final container for the modernized output to be displayed in Streamlit.
+    The final container for modernized output.
+    Used to pass data from the Synthesis Agent back to the Streamlit UI.
     """
+    chunk_id: str
     source_language: str
     target_technology: str
     modern_code: str
     unit_tests: str
     analysis_summary: str
     status_zone: str = Field(description="GREEN, AMBER, or RED")
+    processing_time: float = Field(default=0.0)
+
+# --- REPOSITORY SCANNING (Phase 1) ---
+
+class FileMetadata(BaseModel):
+    """Metadata for files scanned during Step 1."""
+    file_path: str
+    file_name: str
+    extension: str
+    role: str = Field(default="Unknown", description="Entry Program, Library, or Config")
+    normalized_size_kb: float
