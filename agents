@@ -8,19 +8,21 @@ load_dotenv()
 
 class ValidationRefactoringAgent:
     """
-    Phase 3 & 4 Agent: Handles Synthesis and Testing.
-    Optimized for Parallel Streaming and high-concurrency requests.
+    Phase 3 & 4 Agent: Unified Code Synthesis and Validation.
+    Refactored to generate a single cohesive Vanilla Java class and its 
+    corresponding JUnit 5 tests via high-speed streaming.
     """
     def __init__(self):
+        # API Configuration
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
         
-        # Connection Pooling: Critical for parallel streaming to avoid bottlenecks
+        # Connection Pooling optimized for long-duration single-file synthesis
         self.session = requests.Session()
         adapter = requests.adapters.HTTPAdapter(
-            pool_connections=50, 
-            pool_maxsize=50,
-            max_retries=2
+            pool_connections=20, 
+            pool_maxsize=20,
+            max_retries=3
         )
         self.session.mount('https://', adapter)
         self.session.headers.update({
@@ -30,21 +32,30 @@ class ValidationRefactoringAgent:
 
     def stream_llm(self, prompt: str):
         """
-        A generator that streams data from the Azure OpenAI endpoint.
-        Parses SSE (Server-Sent Events) for real-time UI updates.
+        Standardized Azure OpenAI SSE (Server-Sent Events) streaming parser.
+        Yields content character-by-character for real-time UI updates.
         """
         payload = {
             "messages": [
-                {"role": "system", "content": "You are a Senior Software Architect. Output only high-quality, runnable code."},
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system", 
+                    "content": "You are a Senior Java Modernization Architect. "
+                               "Your goal is to produce clean, production-ready Vanilla Java 17+ code. "
+                               "NEVER use Spring Boot, Spring annotations, or third-party frameworks unless specifically requested. "
+                               "Use only the Java Standard Library (JDK)."
+                },
+                {
+                    "role": "user", 
+                    "content": prompt
+                }
             ],
             "temperature": 0,
-            "stream": True  # Enable Azure OpenAI Streaming
+            "stream": True 
         }
 
         try:
-            # We use stream=True and a timeout to ensure responsiveness
-            with self.session.post(self.endpoint, json=payload, stream=True, timeout=60) as response:
+            # Setting a longer timeout for large unified file generation
+            with self.session.post(self.endpoint, json=payload, stream=True, timeout=120) as response:
                 response.raise_for_status()
                 
                 for line in response.iter_lines():
@@ -52,9 +63,8 @@ class ValidationRefactoringAgent:
                         continue
                     
                     line_text = line.decode("utf-8").strip()
-                    # Azure sends chunks prefixed with 'data: '
                     if line_text.startswith("data: "):
-                        content_raw = line_text[6:] # Strip 'data: '
+                        content_raw = line_text[6:] # Remove 'data: ' prefix
                         
                         if content_raw == "[DONE]":
                             break
@@ -67,65 +77,66 @@ class ValidationRefactoringAgent:
                                     yield delta['content']
                         except (json.JSONDecodeError, KeyError):
                             continue
+                            
         except Exception as e:
-            yield f"\n[STREAMING_ERROR: {str(e)}]"
+            yield f"\n[TRANSFORMATION_ERROR: {str(e)}]"
 
-    # --- PROMPT GENERATORS (Required by app.py) ---
+    # --- PHASE 3: UNIFIED VANILLA JAVA SYNTHESIS ---
 
-    def get_synthesis_prompt(self, context: str, spec: str, target_tech: str) -> str:
-        """Constructs the prompt for Phase 3: Code Synthesis."""
+    def get_unified_synthesis_prompt(self, context: str, original_code: str) -> str:
+        """
+        Constructs the prompt for a single-file Vanilla Java transformation.
+        """
         return f"""
-        TASK: Synthesize modern, clean {target_tech} code from legacy logic specs.
-        
-        CONTEXT FROM SHARED LIBRARIES:
-        \"\"\"{context}\"\"\"
+        TASK: Transform the provided legacy source code into a SINGLE cohesive Vanilla Java class.
         
         BUSINESS LOGIC SPECIFICATION:
-        \"\"\"{spec}\"\"\"
+        \"\"\"{context}\"\"\"
         
-        STANDARDS:
-        - Use SOLID principles.
-        - Implement robust error handling.
-        - Output ONLY the code, no conversational filler.
-        - Use modern frameworks (e.g., FastAPI for Python, Spring Boot for Java).
+        LEGACY SOURCE CODE:
+        \"\"\"{original_code}\"\"\"
+        
+        CONSTRAINTS & STANDARDS:
+        1. NO SPRING BOOT: Do not use @Service, @Autowired, @Component, etc.
+        2. NO FRAMEWORKS: Use standard JDK 17+ libraries only (e.g., java.util, java.io, java.math, java.time).
+        3. STRUCTURE: Create a single public class with a meaningful name. 
+        4. DECOUPLING: Convert legacy GOTO or procedural logic into clean methods and proper control structures.
+        5. DATA TYPES: Map legacy types (e.g., COBOL PIC, VB6 Variant) to appropriate Java types (BigDecimal, String, int).
+        6. OUTPUT: Provide ONLY the full .java file content.
         """
 
-    def get_test_prompt(self, modern_code: str, target_tech: str) -> str:
-        """Constructs the prompt for Phase 4: Unit Testing."""
-        framework = "JUnit 5" if "java" in target_tech.lower() else "pytest"
+    # --- PHASE 4: UNIFIED JUNIT 5 TEST GENERATION ---
+
+    def get_unified_test_prompt(self, modern_java_code: str) -> str:
+        """
+        Constructs the prompt to generate a single comprehensive JUnit 5 test suite.
+        """
         return f"""
-        TASK: Generate comprehensive {framework} unit tests for the modernized code.
+        TASK: Generate a single JUnit 5 unit test class for the provided Vanilla Java code.
         
-        CODE TO TEST:
-        \"\"\"{modern_code}\"\"\"
+        MODERN JAVA CODE:
+        \"\"\"{modern_java_code}\"\"\"
         
-        INSTRUCTIONS:
-        - Test edge cases and primary logic paths.
-        - Mock external dependencies where required.
-        - Return ONLY the test source code.
+        REQUIREMENTS:
+        1. FRAMEWORK: Use JUnit 5 (org.junit.jupiter.api).
+        2. COVERAGE: Include test cases for the main execution path and critical edge cases.
+        3. DATA MOCKING: If the code requires data inputs, provide mock data within the test methods.
+        4. NO SPRING: Use standard Java testing patterns (no @SpringBootTest).
+        5. OUTPUT: Provide ONLY the full JUnit test class code.
         """
-
-    # --- HELPER FOR NON-STREAMING (Synchronous) ---
-    
-    def finalize_code_sync(self, context, spec, target_tech):
-        """Collects the full stream into a single string for internal processing."""
-        prompt = self.get_synthesis_prompt(context, spec, target_tech)
-        full_code = ""
-        for chunk in self.stream_llm(prompt):
-            full_code += chunk
-        return full_code
 
     # --- PHASE 4: AUTO-CORRECTION (Reflection Loop) ---
-    def refine_code_from_feedback(self, code, error_log, target_tech):
-        """Self-Correction logic for Phase 4 validation failures."""
+
+    def refine_unified_code(self, code, error_log):
+        """
+        Refinement agent used if the generated code fails automated checks.
+        """
         prompt = f"""
-        The following {target_tech} code failed execution/validation.
+        The following Java code failed validation or has syntax errors. 
+        Fix the errors while maintaining the business logic.
         
         ERROR LOG: {error_log}
-        CODE:
-        {code}
-        
-        Fix the error and return corrected code only.
+        CODE: {code}
         """
         full_refinement = ""
         for chunk in self.stream_llm(prompt):
