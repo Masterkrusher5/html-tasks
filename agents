@@ -1,24 +1,120 @@
 import os
+import json
+import requests
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
 
+# Load Environment Variables
 load_dotenv()
 
 class ValidationRefactoringAgent:
+    """
+    Handles Phase 3 (Modern Code Synthesis) and Phase 4 (Validation & Testing).
+    Communicates directly with the LLM endpoint via the requests library.
+    """
     def __init__(self):
-        self.llm = ChatOpenAI(
-            base_url=os.getenv("LLM_ENDPOINT"),
-            api_key=os.getenv("LLM_API_KEY"),
-            model="gpt-4",
-            temperature=0
-        )
+        # Configuration from .env
+        self.endpoint = os.getenv("LLM_ENDPOINT")
+        self.api_key = os.getenv("LLM_KEY")
+        
+        # Connection Pooling for efficiency
+        self.session = requests.Session()
+        self.session.headers.update({
+            "Content-Type": "application/json",
+            "api-key": self.api_key
+        })
 
-    def finalize_code(self, context: str, spec: str, target_lang: str):
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", f"You are a Senior {target_lang} Developer. Focus on modularity and clean code."),
-            ("user", "Context from Shared Libraries: {context}\nLogic Specification: {spec}\n\n"
-                     "Rewrite this into a runnable {target_lang} service.")
-        ])
-        chain = prompt | self.llm
-        return chain.invoke({"context": context, "spec": spec, "target_lang": target_lang}).content
+    def _call_llm(self, prompt, temperature=0):
+        """Internal helper to execute the POST request to the LLM."""
+        payload = {
+            "messages": [
+                {
+                    "role": "system", 
+                    "content": "You are a Senior Software Architect and QA Engineer specializing in Legacy Modernization."
+                },
+                {
+                    "role": "user", 
+                    "content": prompt
+                }
+            ],
+            "temperature": temperature
+        }
+
+        try:
+            response = self.session.post(self.endpoint, json=payload, timeout=60)
+            response.raise_for_status() # Raises an error for 4xx or 5xx codes
+            
+            res_json = response.json()
+            return res_json['choices'][0]['message']['content']
+        except Exception as e:
+            return f"ERROR_IN_LLM_CALL: {str(e)}"
+
+    # --- PHASE 3: MODERN CODE SYNTHESIS (The Architect & Coder Agent) ---
+    def finalize_code(self, context, spec, target_tech):
+        """
+        Takes the Micro-Spec and Architectural Context to generate modern code.
+        """
+        prompt = f"""
+        TASK: Synthesize modern, runnable code from a legacy specification.
+        TARGET TECHNOLOGY: {target_tech}
+        
+        ARCHITECTURE STANDARDS:
+        - Use clean code principles (SOLID).
+        - Use modern frameworks (e.g., FastAPI for Python, Spring Boot for Java).
+        - Implement proper error handling and logging.
+        
+        CONTEXT FROM SHARED LIBRARIES:
+        \"\"\"{context}\"\"\"
+        
+        BUSINESS LOGIC SPECIFICATION:
+        \"\"\"{spec}\"\"\"
+        
+        INSTRUCTIONS:
+        1. Decouple the logic from legacy patterns.
+        2. Use native modern data structures (e.g., Pydantic models or Java POJOs).
+        3. Ensure the code is production-ready and follows the target technology best practices.
+        
+        Return ONLY the modern source code inside a code block.
+        """
+        return self._call_llm(prompt)
+
+    # --- PHASE 4: VALIDATION & UNIT TESTING (The QA Agent) ---
+    def generate_tests(self, modern_code, target_tech):
+        """
+        Generates Unit Tests based on the business logic requirements.
+        """
+        framework = "JUnit 5" if "java" in target_tech.lower() else "pytest"
+        
+        prompt = f"""
+        TASK: Generate comprehensive Unit Tests for the modernized code below.
+        TARGET FRAMEWORK: {framework}
+        
+        MODERNIZED CODE:
+        \"\"\"{modern_code}\"\"\"
+        
+        INSTRUCTIONS:
+        1. Test for the primary business logic flow.
+        2. Include tests for edge cases identified in the logic.
+        3. Mock external dependencies where necessary.
+        4. Ensure the tests are runnable and follow the {framework} standard.
+        
+        Return ONLY the test code inside a code block.
+        """
+        return self._call_llm(prompt)
+
+    # --- PHASE 4: AUTO-CORRECTION (Reflection Loop) ---
+    def refine_code_from_feedback(self, code, error_log, target_tech):
+        """
+        Self-Correction Agent: Refactors code if a compilation or test error occurs.
+        """
+        prompt = f"""
+        The following {target_tech} code failed validation.
+        
+        ORIGINAL CODE:
+        {code}
+        
+        ERROR LOG:
+        {error_log}
+        
+        Fix the syntax or logic errors and return the corrected code.
+        """
+        return self._call_llm(prompt)
