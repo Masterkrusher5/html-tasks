@@ -9,90 +9,106 @@ load_dotenv()
 
 class UnifiedOpenAIAgent:
     """
-    Forensic Modernization Engine.
-    Path A: Technical Documentation (Narrative + Metadata).
-    Path B: Unified Code Synthesis (Direct from Source).
+    Dual-Pipeline Parallel Engine.
+    Path A: Technical Documentation (Concise 100-150 words).
+    Path B: Direct Source-to-Target Full File Synthesis.
+    
+    Optimized to prevent truncation and 400 errors by separating 
+    documentation and code generation into independent token windows.
     """
     def __init__(self):
+        # Configuration from .env
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
+        
+        if not self.endpoint or not self.api_key:
+            return
+
+        # Connection Pooling for high-speed parallel streaming
         self.session = requests.Session()
+        # Using 'api-key' header (standard for Azure/Enterprise Proxies)
+        # If using standard OpenAI, change 'api-key' to 'Authorization': f'Bearer {self.api_key}'
         self.session.headers.update({
             "api-key": self.api_key,
             "Content-Type": "application/json"
         })
 
     def _safe_truncate(self, text: str, max_chars: int = 15000) -> str:
-        """Prevents context window overflow."""
+        """Ensures large legacy files fit in context window while leaving room for output."""
         return text[:max_chars] if len(text) <= max_chars else text[:max_chars] + "\n...[TRUNCATED]..."
 
-    # --- PIPELINE A: DOCUMENTATION PROMPT ---
-    def get_documentation_prompt(self, code: str) -> str:
-        """Constructs prompt for the Analyst thread (100-150 word summary)."""
-        return f"""
-        Act as a Principal Systems Architect. Analyze the code provided and produce:
-        1. TECHNICAL SUMMARY: A concise technical narrative (100-150 words). 
-           Focus on system architecture, business domain, and core processing logic.
-        2. LOGIC FLOW: Multi-paragraph deep-dive into state management and execution.
-        3. METADATA: JSON block for functions, variables, and dependencies.
+    # --- PIPELINE A: DOCUMENTATION PROMPT (Concise 100-150 words) ---
 
+    def get_documentation_prompt(self, code: str) -> str:
+        """
+        Instructions for the Analyst Thread. 
+        Produces a focused 100-150 word technical summary.
+        """
+        return f"""
+        Act as a Principal Systems Architect. Analyze the legacy code and provide a Markdown report:
+        
+        ### 1. Technical Summary
+        (Write a concise 100-150 word narrative explaining the business domain, system goals, and architectural pattern.)
+
+        ### 2. Execution Flow
+        (Provide a bulleted list of the internal logic flow and state transitions.)
+
+        ### 3. Data Dictionary
+        (List key variables and their business roles.)
+        
+        NO HTML. USE MARKDOWN ONLY.
+        
         CODE:
+        \"\"\"
         {code}
+        \"\"\"
         """
 
-    # --- PIPELINE B: CODE SYNTHESIS PROMPT ---
+    # --- PIPELINE B: UNIFIED FULL-FILE SYNTHESIS PROMPT ---
+
     def get_synthesis_prompt(self, code: str, target_stack: str) -> str:
-        """Constructs prompt for the Coder thread (Complete File focus)."""
-        java_rules = ""
+        """
+        Instructions for the Coder Thread.
+        Directly transforms source to target to maximize output token headroom.
+        """
+        java_constraints = ""
         if "Java" in target_stack:
-            java_rules = (
+            java_constraints = (
                 "- Target: Vanilla Java 17+.\n"
-                "- NO SPRING BOOT: No annotations like @Service, @Autowired.\n"
-                "- Use standard JDK libraries (java.util, java.math.BigDecimal, etc.).\n"
+                "- NO SPRING BOOT: Do not use any annotations like @Service, @Autowired, or @Component.\n"
+                "- STANDARD JDK ONLY: Use java.util, java.math.BigDecimal, java.time, etc.\n"
             )
 
         return f"""
         TASK: YOU MUST CONVERT THE FOLLOWING LEGACY CODE INTO A SINGLE COMPLETE, RUNNABLE {target_stack} FILE.
-        FAILURE IS NOT AN OPTION. DO NOT GENERATE SNIPPETS. PROVIDE THE FULL CODE.
+        FAILURE IS NOT AN OPTION. YOU MUST PROVIDE THE FULL FILE STRUCTURE.
 
-        REQUIREMENTS:
-        1. FULL FILE STRUCTURE: Include package, all imports, class definition, and methods.
-        2. ENCAPSULATION: Map legacy variables to private class fields to maintain state.
-        3. LOGIC PARITY: Replicate all math and branching logic with 100% fidelity.
-        4. {java_rules}
+        STRICT ARCHITECTURAL REQUIREMENTS:
+        1. COMPLETE FILE: Include package declarations, all necessary imports, and the public class definition.
+        2. ENCAPSULATION: Map global legacy state and variables to PRIVATE CLASS MEMBER VARIABLES.
+        3. 100% LOGIC PARITY: Replicate every math formula, conditional 'IF' branch, and data transformation exactly.
+        4. SINGLE FILE: The output must be a cohesive, compilable standalone unit. Do not skip any logic.
+        5. NO SNIPPETS: Do not use placeholders like '// ... rest of code'. Write every single line.
+        6. {java_constraints}
 
         LEGACY SOURCE CODE:
         \"\"\"
         {code}
         \"\"\"
 
-        Return ONLY the full source code. Start immediately with imports/package.
+        Return ONLY the source code. Start with the code immediately. No conversational filler.
         """
 
-    # --- PIPELINE C: UNIT TEST PROMPT ---
-    def get_test_prompt(self, modern_code: str, target_stack: str) -> str:
-        """Constructs prompt for the QA thread."""
-        framework = "JUnit 5" if "Java" in target_stack else "pytest"
-        return f"""
-        TASK: Generate the COMPLETE {framework} unit test class for the code below.
-        
-        CODE TO TEST:
-        {modern_code}
-        
-        REQUIREMENTS:
-        1. 100% Coverage: Include success paths and edge cases.
-        2. Mocking: Use standard mocking for external dependencies if any.
-        3. Return ONLY the full test source code.
-        """
+    # --- STREAMING ENGINE (SSE Parser) ---
 
-    def stream_llm(self, prompt: str, max_tokens: int = 4096):
+    def stream_llm(self, prompt: str, max_tokens: int = 4000):
         """
-        Standardized SSE Streaming Parser. 
-        max_tokens is set high to ensure full code completion.
+        High-performance SSE parser for real-time parallel streaming.
+        Handles standard Azure/OpenAI 'data: ' format.
         """
         payload = {
             "messages": [
-                {"role": "system", "content": "You are a specialized modernization architect. You provide exhaustive, complete outputs."},
+                {"role": "system", "content": "You are a professional modernization engine. You output content with 100% accuracy and never truncate your output."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.1,
@@ -101,28 +117,51 @@ class UnifiedOpenAIAgent:
         }
 
         try:
-            with self.session.post(self.endpoint, json=payload, stream=True, timeout=300) as resp:
+            with self.session.post(self.endpoint, json=payload, stream=True, timeout=180) as resp:
                 resp.raise_for_status()
                 for line in resp.iter_lines():
                     if line:
                         line_text = line.decode("utf-8").strip()
                         if line_text.startswith("data: "):
-                            content_raw = line_text[6:]
+                            content_raw = line_text[6:] # Strip 'data: '
                             if content_raw == "[DONE]":
                                 break
                             try:
-                                chunk = json.loads(content_raw)
-                                delta = chunk['choices'][0].get('delta', {}).get('content', '')
+                                chunk_json = json.loads(content_raw)
+                                delta = chunk_json['choices'][0].get('delta', {}).get('content', '')
                                 if delta:
                                     yield delta
-                            except:
+                            except (json.JSONDecodeError, KeyError, IndexError):
                                 continue
         except Exception as e:
             yield f"\n[STREAMING_ERROR: {str(e)}]"
 
+    # --- PHASE 4: VALIDATION (Full Test Suite) ---
+
+    def get_test_prompt(self, modern_code: str, target_stack: str) -> str:
+        """
+        Generates a comprehensive unit test suite.
+        """
+        framework = "JUnit 5" if "Java" in target_stack else "pytest"
+        return f"""
+        TASK: Generate a single COMPLETE {framework} test file for the modernized code provided below.
+        
+        REQUIREMENTS:
+        1. 100% COVERAGE: Include test cases for initialization, all main logic paths, and edge cases.
+        2. MOCKING: Use standard mocking (like Mockito for Java) for any I/O or external dependencies.
+        3. FULL FILE: Include all imports and class headers. No snippets.
+        
+        CODE TO TEST:
+        {modern_code}
+        """
+
     def calculate_dashboard_metrics(self, doc_text: str) -> dict:
-        """Heuristic risk metrics based on documentation length and keywords."""
+        """Heuristic risk analysis based on documentation length and detail."""
         length = len(doc_text)
+        # Dynamic Heuristics based on text length since we are streaming raw markdown
         if length > 1000:
-            return {"zone": "GREEN", "color": "green", "confidence": "95%"}
-        return {"zone": "AMBER", "color": "orange", "confidence": "70%"}
+            return {"zone": "GREEN", "color": "green", "confidence_pct": "98%", "complexity": "Medium"}
+        elif length > 500:
+            return {"zone": "AMBER", "color": "orange", "confidence_pct": "85%", "complexity": "High"}
+        else:
+            return {"zone": "RED", "color": "red", "confidence_pct": "50%", "complexity": "Critical"}
