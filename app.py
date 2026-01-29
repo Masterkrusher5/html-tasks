@@ -3,15 +3,10 @@ import os
 import threading
 import time
 from dotenv import load_dotenv
-
-# --- THREADING CONTEXT IMPORTS ---
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
-
-# Import core modules
 from core.ingestion import FileIngestor
 from core.analyzer import UnifiedOpenAIAgent
 
-# Load environment variables
 load_dotenv()
 
 # 1. Page Configuration
@@ -33,14 +28,15 @@ if "agent" not in st.session_state:
 def synthesis_worker(clean_code, target_lang, code_slot, test_slot, result_collector):
     """
     Background worker that streams the Full Code and then the Test Suite.
+    Uses 'High-Density' prompting to prevent truncation.
     """
     agent = st.session_state.agent
     lang_key = "java" if "Java" in target_lang else "python" if "Python" in target_lang else "csharp"
     
     try:
-        # 1. STREAM CODE (Using the Direct Source-to-Target Prompt)
+        # 1. STREAM CODE (Direct Source-to-Target)
+        # We pass the raw code directly to maximize the token budget for the output
         full_code = ""
-        # Note: We pass clean_code directly, bypassing the Doc JSON to avoid truncation
         synth_prompt = agent.get_synthesis_prompt(clean_code, target_lang)
         
         for delta in agent.stream_llm(synth_prompt, max_tokens=4000):
@@ -73,7 +69,7 @@ def synthesis_worker(clean_code, target_lang, code_slot, test_slot, result_colle
 
 # --- MAIN UI ---
 st.title("🛡️ Forensic Legacy Modernizer Pro")
-st.markdown("Automated Ingestion ➡️ Forensic Analysis ➡️ Full-File Synthesis")
+st.markdown("Automated Ingestion ➡️ Concise Documentation ➡️ High-Density Synthesis")
 
 # Sidebar
 with st.sidebar:
@@ -99,7 +95,7 @@ if uploaded_file:
         st.session_state.clean_code = st.session_state.ingestor.normalize(raw_content)
         st.session_state.meta = st.session_state.ingestor.extract_metadata(uploaded_file, st.session_state.clean_code)
         st.session_state.current_file = uploaded_file.name
-        # Clear previous results on new file load
+        # Clear previous results
         if "doc_text" in st.session_state: del st.session_state.doc_text
         if "final_results" in st.session_state: del st.session_state.final_results
 
@@ -109,18 +105,18 @@ if uploaded_file:
     c2.metric("Detected Role", meta['role'])
     c3.metric("Payload Size", f"{meta['size_kb']} KB")
 
-    # --- STEP 2: FORENSIC DOCUMENTATION (Streaming Markdown) ---
+    # --- STEP 2: DOCUMENTATION (Markdown Stream) ---
     st.divider()
-    st.subheader("📝 Phase 1: Forensic Documentation")
+    st.subheader("📝 Phase 1: Technical Documentation")
     
     if st.button("Start Analysis", type="primary"):
         doc_placeholder = st.empty()
         full_doc = ""
         
-        # Stream the documentation (Narrative Mode)
+        # Stream the documentation (Concise Narrative Mode)
         prompt = st.session_state.agent.get_documentation_prompt(st.session_state.clean_code)
         
-        for delta in st.session_state.agent.stream_llm(prompt, max_tokens=2000):
+        for delta in st.session_state.agent.stream_llm(prompt, max_tokens=1500):
             full_doc += delta
             doc_placeholder.markdown(full_doc + " ▌")
         
@@ -129,15 +125,15 @@ if uploaded_file:
 
     # Display persisted documentation and metrics
     if "doc_text" in st.session_state:
-        if not st.button("Regenerate Analysis", key="regen_btn"): # Simple trick to keep doc visible
+        if not st.button("Show Doc", key="regen_btn"): 
              st.markdown(st.session_state.doc_text)
         
-        # Calculate Heuristic Metrics based on text length/content
+        # Calculate Metrics based on text length
         metrics = st.session_state.agent.calculate_dashboard_metrics(st.session_state.doc_text)
         
         st.info(f"**Analysis Confidence:** {metrics['confidence_pct']} | **Risk Zone:** {metrics['zone']}")
 
-        # --- STEP 3: UNIFIED SYNTHESIS ---
+        # --- STEP 3: HIGH-DENSITY SYNTHESIS ---
         st.divider()
         st.subheader(f"🚀 Phase 2: Modernization ({target_stack})")
         
@@ -177,6 +173,14 @@ if "final_results" in st.session_state:
     
     d1, d2 = st.columns(2)
     with d1:
-        st.download_button("💾 Download Source Code", st.session_state.final_results["code"], file_name=f"modernized.{ext}")
+        st.download_button(
+            label="💾 Download Source Code", 
+            data=st.session_state.final_results["code"], 
+            file_name=f"modernized.{ext}"
+        )
     with d2:
-        st.download_button("🧪 Download Tests", st.session_state.final_results["tests"], file_name=f"tests.{ext}")
+        st.download_button(
+            label="🧪 Download Tests", 
+            data=st.session_state.final_results["tests"], 
+            file_name=f"tests.{ext}"
+        )
