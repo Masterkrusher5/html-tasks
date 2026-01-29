@@ -8,106 +8,124 @@ load_dotenv()
 
 class RAGContextEngine:
     """
-    Step 3, 4 & 6: Unified Knowledge & Blueprint Engine.
-    Transforms forensic analysis into a cohesive 'Technical Specification' 
-    and 'Modernization Blueprint' for the Synthesis phase.
+    Step 3, 4 & 6: Unified Knowledge Extraction & Blueprint Engine.
+    Refactored to communicate via direct HTTP requests to a generic LLM Endpoint.
+    Transforms forensic analysis into professional documentation and architectural blueprints.
     """
     def __init__(self):
-        # Configuration from Azure environment
+        # Configuration from .env
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
         
-        # Connection Pooling for Azure OpenAI
+        if not self.endpoint or not self.api_key:
+            raise ValueError("LLM_ENDPOINT or LLM_KEY not found in environment variables.")
+        
+        # Connection Pooling for high performance
         self.session = requests.Session()
         self.session.headers.update({
             "Content-Type": "application/json",
-            "api-key": self.api_key
+            "api-key": self.api_key  # Standard for Azure/Enterprise Gateways
         })
 
-    def _call_llm(self, prompt: str) -> str:
-        """Internal helper to communicate with Azure OpenAI."""
+    def _call_llm(self, prompt: str, system_message: str = "You are a Technical Architect.") -> str:
+        """Internal helper to execute synchronous POST requests to the LLM."""
         payload = {
             "messages": [
-                {
-                    "role": "system", 
-                    "content": "You are a Technical Architect specializing in Business Logic Extraction."
-                },
-                {
-                    "role": "user", 
-                    "content": prompt
-                }
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": prompt}
             ],
             "temperature": 0
         }
         try:
             response = self.session.post(self.endpoint, json=payload, timeout=60)
             response.raise_for_status()
-            return response.json()['choices'][0]['message']['content']
+            res_data = response.json()
+            return res_data['choices'][0]['message']['content']
         except Exception as e:
-            return f"BLUEPRINT_GENERATION_ERROR: {str(e)}"
+            return f"ERROR_CALLING_LLM: {str(e)}"
 
-    def get_unified_context(self, forensic_data: dict, original_code: str) -> str:
+    def formalize_documentation(self, forensic_data: dict) -> str:
         """
-        Step 3 & 6: Context Retrieval & Blueprinting.
-        Synthesizes the Forensic Analysis into a single architectural blueprint.
-        Ensures the synthesis agent understands global state and execution flow.
+        Step 4: Formal Technical Documentation.
+        Takes the raw Forensic JSON and formats it into a high-contrast, 
+        readable Technical Specification for the dashboard.
+        """
+        summary = forensic_data.get("summary", "N/A")
+        description = forensic_data.get("description", "N/A")
+        functions = forensic_data.get("functions", [])
+        data_dict = forensic_data.get("data_dictionary", [])
+        
+        # 1. Header & Executive Summary
+        doc = f"### 📘 Technical & Functional Specification\n\n"
+        doc += f"#### 1. Executive Summary\n{summary}\n\n"
+        doc += f"#### 2. Comprehensive Business Logic\n{description}\n\n"
+        
+        # 2. Forensic Data Dictionary (Legacy to Modern Variable Mapping)
+        if data_dict:
+            doc += "#### 3. Forensic Data Dictionary\n"
+            doc += "| Legacy Variable | Inferred Type | Business Role / Meaning |\n"
+            doc += "| :--- | :--- | :--- |\n"
+            for item in data_dict:
+                var = item.get("variable", "N/A")
+                vtype = item.get("type", "N/A")
+                role = item.get("role", "N/A")
+                doc += f"| `{var}` | {vtype} | {role} |\n"
+            doc += "\n"
+
+        # 3. Procedure Breakdown
+        if functions:
+            doc += "#### 4. Granular Functional Analysis\n"
+            doc += "| Procedure Name | Functional Goal | Key Business Rules |\n"
+            doc += "| :--- | :--- | :--- |\n"
+            for func in functions:
+                name = func.get("name", "N/A")
+                purpose = func.get("purpose", "N/A")
+                rules = func.get("business_rules", "N/A")
+                doc += f"| **{name}** | {purpose} | {rules} |\n"
+            
+        return doc
+
+    def get_modernization_blueprint(self, forensic_data: dict, target_lang: str) -> str:
+        """
+        Step 6: Context Retrieval Engine.
+        Synthesizes the forensic analysis into a 'Code Blueprint' to ensure 
+        logical continuity during the synthesis phase.
         """
         prompt = f"""
-        Act as a Lead Solutions Architect. Your task is to create a 'Modernization Blueprint' 
-        based on the following Forensic Analysis of a legacy system.
-
+        Act as a Lead Software Architect. Based on the Forensic Analysis provided, 
+        design a structural blueprint for a single {target_lang} file.
+        
         FORENSIC DATA:
         {json.dumps(forensic_data)}
-
-        ORIGINAL CODE REFERENCE:
-        \"\"\"
-        {original_code[:2000]}  # Providing a snippet for context
-        \"\"\"
-
+        
         INSTRUCTIONS:
-        1. Unified Logic Flow: Describe the end-to-end execution path from entry to exit.
-        2. State Management: Identify all global variables or file-based states that must be maintained.
-        3. Business Rule Consolidation: Summarize the critical formulas and decision trees.
-        4. Modernization Strategy: Suggest how to structure the modern class (e.g., private helper methods, 
-           data models, and error handling patterns).
+        1. Class Design: Define the primary class name and its structure.
+        2. Logic Mapping: Map legacy paragraphs/functions to modern method signatures.
+        3. State Management: Identify how to handle shared legacy variables (e.g. class-level members).
+        4. Modern Patterns: Suggest specific {target_lang} patterns (e.g. Try-Catch blocks, Data Models).
+        
+        Return a concise architectural blueprint.
+        """
+        
+        return self._call_llm(prompt, system_message="You are a Senior Software Architect.")
 
-        This blueprint will be used by a Coder Agent to write the final source code. 
-        Be extremely precise and technical.
+    def validate_auto_approval(self, forensic_data: dict) -> dict:
         """
-        return self._call_llm(prompt)
-
-    def formalize_forensic_report(self, doc_data: dict) -> str:
+        Step 5: Automated Correctness Evaluation (Quality Gate).
+        Analyzes metrics to decide if the modernization can proceed automatically.
         """
-        Step 4: Formal Documentation.
-        Converts the raw forensic JSON into a human-readable, professional 
-        Technical Specification for the UI.
-        """
-        summary = doc_data.get("summary", "N/A")
-        description = doc_data.get("description", "N/A")
+        conf = forensic_data.get("confidence_score", 0)
+        complexity = forensic_data.get("complexity_rating", 10)
         
-        report = f"### 📘 Technical Specification\n\n**Overview:** {summary}\n\n**Business Logic:** {description}\n\n"
+        # Auto-Approval Criteria: High confidence (>85%) and manageable complexity (<8)
+        is_approved = conf >= 0.85 and complexity < 8
         
-        # Add Data Dictionary Section
-        if "data_dictionary" in doc_data:
-            report += "#### 📊 Data Dictionary\n"
-            report += "| Variable | Type | Business Role |\n| :--- | :--- | :--- |\n"
-            for item in doc_data["data_dictionary"]:
-                report += f"| {item.get('variable')} | {item.get('type')} | {item.get('role')} |\n"
+        # Risk Mapping
+        risk_level = "LOW" if complexity < 4 else "MEDIUM" if complexity < 8 else "HIGH"
         
-        return report
-
-    def calculate_blueprint_confidence(self, forensic_data: dict) -> float:
-        """
-        Calculates a confidence metric for the Knowledge Base phase.
-        Feeds into the Dashboard's 'Auto-Approval' logic.
-        """
-        # Heuristic: If we have a Data Dictionary and more than 3 functions detected, 
-        # confidence in the knowledge extraction is high.
-        has_dict = len(forensic_data.get("data_dictionary", [])) > 0
-        func_count = len(forensic_data.get("functions", []))
-        
-        score = 0.5
-        if has_dict: score += 0.3
-        if func_count > 2: score += 0.2
-        
-        return min(score, 1.0)
+        return {
+            "status": "APPROVED" if is_approved else "MANUAL_REVIEW_REQUIRED",
+            "confidence_pct": f"{conf * 100:.0f}%",
+            "risk_level": risk_level,
+            "reason": "Technical specs are clear and logic is unambiguous." if is_approved else "High complexity or low confidence detected. Manual oversight recommended."
+        }
