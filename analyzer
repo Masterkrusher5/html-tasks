@@ -9,12 +9,9 @@ load_dotenv()
 
 class UnifiedOpenAIAgent:
     """
-    Dual-Pipeline Parallel Engine.
-    Path A: Technical Documentation (Concise 100-150 words).
-    Path B: Direct Source-to-Target Full File Synthesis.
-    
-    Optimized to prevent truncation and 400 errors by separating 
-    documentation and code generation into independent token windows.
+    Forensic Modernization Engine.
+    Optimized for high-density code synthesis and concise technical documentation.
+    Communicates via direct HTTP requests to any LLM endpoint.
     """
     def __init__(self):
         # Configuration from .env
@@ -24,96 +21,107 @@ class UnifiedOpenAIAgent:
         if not self.endpoint or not self.api_key:
             return
 
-        # Connection Pooling for high-speed parallel streaming
+        # Connection Pooling for high performance
         self.session = requests.Session()
-        # Using 'api-key' header (standard for Azure/Enterprise Proxies)
-        # If using standard OpenAI, change 'api-key' to 'Authorization': f'Bearer {self.api_key}'
+        # Standard header setup for Azure/Enterprise Gateways
         self.session.headers.update({
             "api-key": self.api_key,
             "Content-Type": "application/json"
         })
 
     def _safe_truncate(self, text: str, max_chars: int = 15000) -> str:
-        """Ensures large legacy files fit in context window while leaving room for output."""
+        """
+        Prevents 400 Bad Request errors by ensuring the input payload 
+        doesn't exceed the context window limits.
+        """
         return text[:max_chars] if len(text) <= max_chars else text[:max_chars] + "\n...[TRUNCATED]..."
 
-    # --- PIPELINE A: DOCUMENTATION PROMPT (Concise 100-150 words) ---
+    # --- PHASE 1: TECHNICAL DOCUMENTATION ---
 
     def get_documentation_prompt(self, code: str) -> str:
         """
-        Instructions for the Analyst Thread. 
-        Produces a focused 100-150 word technical summary.
+        Analyst Thread: Generates a Markdown report.
+        Strictly limits output to Summary, Flow, and Data to save tokens.
         """
+        safe_code = self._safe_truncate(code)
+        
         return f"""
-        Act as a Principal Systems Architect. Analyze the legacy code and provide a Markdown report:
+        Act as a Principal Systems Architect. Analyze the legacy code and provide a Markdown report.
+        
+        STRICT OUTPUT FORMAT (NO OBSERVATIONS, NO RECOMMENDATIONS):
         
         ### 1. Technical Summary
-        (Write a concise 100-150 word narrative explaining the business domain, system goals, and architectural pattern.)
+        (Concise 100-150 word narrative explaining business domain and goal.)
 
         ### 2. Execution Flow
-        (Provide a bulleted list of the internal logic flow and state transitions.)
+        (Bulleted list of internal logic flow and state transitions.)
 
         ### 3. Data Dictionary
-        (List key variables and their business roles.)
+        (Table of key variables and their business roles.)
         
-        NO HTML. USE MARKDOWN ONLY.
+        NO HTML. NO EXTRA CONVERSATIONAL TEXT.
         
         CODE:
         \"\"\"
-        {code}
+        {safe_code}
         \"\"\"
         """
 
-    # --- PIPELINE B: UNIFIED FULL-FILE SYNTHESIS PROMPT ---
+    # --- PHASE 2: HIGH-DENSITY SYNTHESIS ---
 
     def get_synthesis_prompt(self, code: str, target_stack: str) -> str:
         """
-        Instructions for the Coder Thread.
-        Directly transforms source to target to maximize output token headroom.
+        Coder Thread: Zero-Shot Direct Translation.
+        Removes verbose comments and explanations to ensure the file fits in the output window.
         """
+        safe_code = self._safe_truncate(code)
+        
         java_constraints = ""
         if "Java" in target_stack:
             java_constraints = (
                 "- Target: Vanilla Java 17+.\n"
-                "- NO SPRING BOOT: Do not use any annotations like @Service, @Autowired, or @Component.\n"
-                "- STANDARD JDK ONLY: Use java.util, java.math.BigDecimal, java.time, etc.\n"
+                "- NO SPRING BOOT/Annotations.\n"
+                "- Standard JDK libraries only."
             )
 
         return f"""
-        TASK: YOU MUST CONVERT THE FOLLOWING LEGACY CODE INTO A SINGLE COMPLETE, RUNNABLE {target_stack} FILE.
-        FAILURE IS NOT AN OPTION. YOU MUST PROVIDE THE FULL FILE STRUCTURE.
+        TASK: CONVERT LEGACY CODE TO A SINGLE COMPLETE {target_stack} FILE.
+        
+        CRITICAL TOKEN SAVING RULES:
+        1. NO COMMENTS: Do not write comments explaining the code. Only write code.
+        2. NO OBSERVATIONS/RECOMMENDATIONS: Do not add notes at the end.
+        3. NO MARKDOWN WRAPPERS: Just start with the code.
+        4. DENSE LOGIC: Keep whitespace standard but minimal.
+        
+        ARCHITECTURAL REQUIREMENTS:
+        1. COMPLETE FILE: Package, Imports, Class, Methods.
+        2. STATE: Map legacy globals to private class fields.
+        3. 100% LOGIC PARITY: Replicate all math/logic exactly.
+        4. {java_constraints}
 
-        STRICT ARCHITECTURAL REQUIREMENTS:
-        1. COMPLETE FILE: Include package declarations, all necessary imports, and the public class definition.
-        2. ENCAPSULATION: Map global legacy state and variables to PRIVATE CLASS MEMBER VARIABLES.
-        3. 100% LOGIC PARITY: Replicate every math formula, conditional 'IF' branch, and data transformation exactly.
-        4. SINGLE FILE: The output must be a cohesive, compilable standalone unit. Do not skip any logic.
-        5. NO SNIPPETS: Do not use placeholders like '// ... rest of code'. Write every single line.
-        6. {java_constraints}
-
-        LEGACY SOURCE CODE:
+        LEGACY SOURCE:
         \"\"\"
-        {code}
+        {safe_code}
         \"\"\"
 
-        Return ONLY the source code. Start with the code immediately. No conversational filler.
+        START CODE IMMEDIATELY:
         """
 
-    # --- STREAMING ENGINE (SSE Parser) ---
+    # --- STREAMING ENGINE ---
 
     def stream_llm(self, prompt: str, max_tokens: int = 4000):
         """
-        High-performance SSE parser for real-time parallel streaming.
-        Handles standard Azure/OpenAI 'data: ' format.
+        Standardized SSE (Server-Sent Events) Parser.
+        Configured for maximum output length to prevent truncation.
         """
         payload = {
             "messages": [
-                {"role": "system", "content": "You are a professional modernization engine. You output content with 100% accuracy and never truncate your output."},
+                {"role": "system", "content": "You are a code generator. Output ONLY code. Do not cut off."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.1,
             "stream": True,
-            "max_tokens": max_tokens
+            "max_tokens": max_tokens # Request maximum possible tokens
         }
 
         try:
@@ -123,7 +131,7 @@ class UnifiedOpenAIAgent:
                     if line:
                         line_text = line.decode("utf-8").strip()
                         if line_text.startswith("data: "):
-                            content_raw = line_text[6:] # Strip 'data: '
+                            content_raw = line_text[6:]
                             if content_raw == "[DONE]":
                                 break
                             try:
@@ -136,32 +144,27 @@ class UnifiedOpenAIAgent:
         except Exception as e:
             yield f"\n[STREAMING_ERROR: {str(e)}]"
 
-    # --- PHASE 4: VALIDATION (Full Test Suite) ---
+    # --- PHASE 3: VALIDATION ---
 
     def get_test_prompt(self, modern_code: str, target_stack: str) -> str:
-        """
-        Generates a comprehensive unit test suite.
-        """
+        """Generates unit tests based on the synthesized code."""
         framework = "JUnit 5" if "Java" in target_stack else "pytest"
         return f"""
-        TASK: Generate a single COMPLETE {framework} test file for the modernized code provided below.
+        Generate a {framework} test suite for this code. 
+        NO EXPLANATIONS. CODE ONLY.
         
-        REQUIREMENTS:
-        1. 100% COVERAGE: Include test cases for initialization, all main logic paths, and edge cases.
-        2. MOCKING: Use standard mocking (like Mockito for Java) for any I/O or external dependencies.
-        3. FULL FILE: Include all imports and class headers. No snippets.
-        
-        CODE TO TEST:
+        CODE:
         {modern_code}
         """
 
     def calculate_dashboard_metrics(self, doc_text: str) -> dict:
-        """Heuristic risk analysis based on documentation length and detail."""
+        """
+        Calculates heuristics based on the length of the generated documentation.
+        """
         length = len(doc_text)
-        # Dynamic Heuristics based on text length since we are streaming raw markdown
-        if length > 1000:
-            return {"zone": "GREEN", "color": "green", "confidence_pct": "98%", "complexity": "Medium"}
-        elif length > 500:
+        if length > 800:
+            return {"zone": "GREEN", "color": "green", "confidence_pct": "95%", "complexity": "Medium"}
+        elif length > 400:
             return {"zone": "AMBER", "color": "orange", "confidence_pct": "85%", "complexity": "High"}
         else:
             return {"zone": "RED", "color": "red", "confidence_pct": "50%", "complexity": "Critical"}
