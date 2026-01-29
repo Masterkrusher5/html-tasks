@@ -1,84 +1,71 @@
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Any
 
-# --- PHASE 1 & 2: KNOWLEDGE EXTRACTION & ANALYSIS ---
+# --- PHASE 1: INGESTION METADATA ---
 
-class GraphData(BaseModel):
+class FileMetadata(BaseModel):
     """
-    Represents the Syntactic and Semantic structure extracted in Phase 2.
-    Used to populate the 'Structural Insights' JSON in the dashboard.
+    Metadata for the legacy file ingested.
+    Used to populate the initial scan results.
     """
-    ast_nodes: List[str] = Field(default_factory=list, description="Key structural components (Variables, Ifs, Loops)")
-    control_flow: Dict[str, Any] = Field(default_factory=dict, description="Logic paths (Entry, Branches, Exits)")
-    data_flow: Dict[str, Any] = Field(default_factory=dict, description="Variable lifecycle (Define, Modify, Read)")
-    complexity_metrics: Dict[str, Any] = Field(default_factory=dict, description="Cyclomatic complexity and nesting depth")
+    file_name: str
+    size_kb: float
+    role: str = Field(description="Entry Program or Shared Library")
+    line_count: int
 
-class LogicStep(BaseModel):
-    """Individual transformation steps within a business rule."""
-    step_name: str
-    description: str
-    logic_transformation: str
+# --- PHASE 2: FORENSIC KNOWLEDGE EXTRACTION ---
 
-class MicroSpec(BaseModel):
+class ForensicFunction(BaseModel):
     """
-    The structured specification that replaces missing documentation.
-    Used by the Architect Agent to generate runnable code.
+    Detailed breakdown of a legacy procedure or paragraph.
+    Captures the granular 'Forensic' details requested.
     """
-    module_name: str
-    input_variables: List[str]
-    output_variables: List[str]
-    business_rules: List[LogicStep]
-    edge_cases: List[str]
-    complexity_score: int = Field(default=5, ge=1, le=10)
+    name: str = Field(description="Formal name of the logic block")
+    purpose: str = Field(description="The functional goal of this block")
+    logic_explanation: str = Field(description="Granular step-by-step logic breakdown")
+    inputs_outputs: str = Field(description="Variables or files accessed/modified")
+    business_rules: str = Field(description="Specific financial or logical rules enforced")
 
-# --- PHASE 2: EVALUATION & DASHBOARDING ---
-
-class EvalReport(BaseModel):
+class DataMapping(BaseModel):
     """
-    The output of the Quality Gate. 
-    Determines the Dashboard Heatmap color (Green/Amber/Red).
+    Entry for the Forensic Data Dictionary.
+    Maps cryptic legacy variables to modern business roles.
     """
-    confidence_score: float = Field(ge=0.0, le=1.0)
-    discrepancies: List[str] = Field(default_factory=list)
-    is_hallucination_detected: bool = False
-    manual_review_priority: str = Field(default="Medium", description="Low, Medium, or High")
+    variable: str = Field(description="Legacy variable name (e.g., WS-ACC-BAL)")
+    type: str = Field(description="Inferred data type (e.g., PIC S9(9)V99)")
+    role: str = Field(description="Meaning in business context (e.g., Current Account Balance)")
 
-# --- PHASE 3: KNOWLEDGE BASE & CHUNKING ---
-
-class SemanticChunk(BaseModel):
+class ComprehensiveForensicDoc(BaseModel):
     """
-    Represents a functional unit of code stored in the Knowledge Base (RAG Layer).
-    Critical for Step 3 (Chunking) and Step 6 (Context Retrieval).
+    The 'Living Specification' that replaces legacy documentation.
+    This is the core source of truth for the modernization.
     """
-    chunk_id: str
-    logic_type: str = Field(description="e.g., Calculation, Validation, Data_IO")
-    description: str = Field(description="Plain English summary of the logic intent")
-    original_code: str = Field(description="The source snippet for reference")
-    context_score: float = Field(default=0.0)
-    dependencies: List[str] = Field(default_factory=list, description="Shared libraries or global variables")
+    summary: str = Field(description="Professional executive summary")
+    description: str = Field(description="Verbose, multi-paragraph business logic deep-dive")
+    functions: List[ForensicFunction] = Field(description="Granular analysis of every subroutine")
+    data_dictionary: List[DataMapping] = Field(description="Mapping of all legacy variables")
+    dependencies: List[str] = Field(description="External files, DB tables, or libraries")
+    complexity_rating: int = Field(ge=1, le=10, description="1-10 spaghetti factor")
+    confidence_score: float = Field(ge=0.0, le=1.0, description="Analysis certainty")
+    auto_approval_status: bool = Field(description="True if logic is clear for auto-conversion")
 
-# --- PHASE 4: MODERNIZATION OUTPUT ---
+# --- PHASE 3 & 4: MODERNIZATION & EVALUATION ---
+
+class DashboardMetrics(BaseModel):
+    """
+    Data structure for the Evaluation Dashboard Heatmap.
+    """
+    zone: str = Field(description="GREEN, AMBER, or RED")
+    color: str = Field(description="Hex or CSS class for the zone")
+    confidence_pct: str
+    complexity: Any
 
 class ModernizationResult(BaseModel):
     """
-    The final container for modernized output.
-    Used to pass data from the Synthesis Agent back to the Streamlit UI.
+    The final output container for the unified transformation.
     """
-    chunk_id: str
-    source_language: str
-    target_technology: str
+    target_language: str
     modern_code: str
     unit_tests: str
-    analysis_summary: str
-    status_zone: str = Field(description="GREEN, AMBER, or RED")
-    processing_time: float = Field(default=0.0)
-
-# --- REPOSITORY SCANNING (Phase 1) ---
-
-class FileMetadata(BaseModel):
-    """Metadata for files scanned during Step 1."""
-    file_path: str
-    file_name: str
-    extension: str
-    role: str = Field(default="Unknown", description="Entry Program, Library, or Config")
-    normalized_size_kb: float
+    transformation_time: float
+    confidence_score: float
