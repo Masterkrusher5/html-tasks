@@ -1,135 +1,116 @@
 import os
 import re
-import json
-import requests
-from dotenv import load_dotenv
 
-# Load Environment Variables
-load_dotenv()
-
-class LegacyIngestor:
+class FileIngestor:
     """
-    Phase 1, Step 1: Legacy Code Ingestion.
-    Responsible for repository scanning, code normalization, and 
-    AI-assisted role detection (Entry vs. Library).
+    Phase 1: Legacy Code Ingestion & Normalization.
+    Handles file parsing, encoding resilience, and structural normalization
+    to prepare voluminous code for technical analysis.
     """
-    def __init__(self):
-        self.endpoint = os.getenv("LLM_ENDPOINT")
-        self.api_key = os.getenv("LLM_KEY")
-        
-        # Session setup for intelligent categorization calls
-        self.session = requests.Session()
-        self.session.headers.update({
-            "Content-Type": "application/json",
-            "api-key": self.api_key
-        })
 
-    def normalize(self, code: str) -> str:
+    @staticmethod
+    def normalize(code: str) -> str:
         """
-        Cleans voluminous code by removing redundant spaces, 
-        standardizing indentation, and stripping noise.
+        Standardizes legacy source code to reduce token usage and improve clarity.
+        1. Collapses redundant multiple spaces (common in COBOL).
+        2. Strips leading/trailing whitespace.
+        3. Removes empty lines to condense logic.
         """
         if not code:
             return ""
-            
-        # 1. Remove multiple spaces and replace with a single space
+
+        # 1. Replace multiple spaces with a single space 
+        # (This collapses COBOL's fixed-field whitespace while preserving logic)
         code = re.sub(r' +', ' ', code)
-        
-        # 2. Standardize indentation: Split lines, strip, and rejoin
-        # This makes it easier for the AST parser to find logic blocks
+
+        # 2. Process line by line for standardization
         lines = code.splitlines()
         normalized_lines = []
-        for line in lines:
-            trimmed = line.strip()
-            if trimmed:  # Only add non-empty lines
-                normalized_lines.append(trimmed)
         
+        for line in lines:
+            clean_line = line.strip()
+            # Only keep lines that have actual content to save processing time
+            if clean_line:
+                normalized_lines.append(clean_line)
+
         return "\n".join(normalized_lines)
 
-    def scan_repository(self, root_dir: str):
+    @staticmethod
+    def read_uploaded_file(uploaded_file) -> str:
         """
-        Recursively scans the directory to map the file system.
+        Safely reads file content from a Streamlit UploadedFile object.
+        Implements fallback decoding for legacy encodings (Latin-1).
         """
-        inventory = {
-            "source_files": [],
-            "config_files": [],
-            "total_files": 0
-        }
-        
-        extensions = ('.cbl', '.cob', '.vb', '.bas', '.frm', '.java', '.xml', '.config', '.properties')
-        
-        for root, _, files in os.walk(root_dir):
-            for file in files:
-                if file.lower().endswith(extensions):
-                    path = os.path.join(root, file)
-                    inventory["total_files"] += 1
-                    if file.lower().endswith(('.xml', '.config', '.properties')):
-                        inventory["config_files"].append(path)
-                    else:
-                        inventory["source_files"].append(path)
-                        
-        return inventory
-
-    def detect_file_role(self, file_name: str, code_snippet: str):
-        """
-        Uses the LLM to intelligently decide if a file is an 
-        'Entry Point' (Main), 'Shared Library' (Utility), or 'Config'.
-        """
-        prompt = f"""
-        Act as a Legacy Systems Architect. Categorize this file based on its name and code snippet.
-        
-        FILE NAME: {file_name}
-        SNIPPET:
-        \"\"\"
-        {code_snippet[:1000]}
-        \"\"\"
-
-        Return a JSON object:
-        {{
-            "role": "Entry Program" | "Shared Library" | "Configuration",
-            "reason": "Brief explanation",
-            "main_logic_found": true/false
-        }}
-        """
-
-        payload = {
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0
-        }
-
         try:
-            response = self.session.post(self.endpoint, json=payload, timeout=20)
-            response.raise_for_status()
-            
-            raw_res = response.json()['choices'][0]['message']['content']
-            
-            # Helper to extract JSON from string
-            start = raw_res.find("{")
-            end = raw_res.rfind("}")
-            if start != -1 and end != -1:
-                return json.loads(raw_res[start : end + 1])
-            return {"role": "Unknown", "reason": "Failed to parse AI response"}
-            
-        except Exception as e:
-            return {"role": "Unknown", "reason": str(e)}
+            # Try standard modern encoding
+            return uploaded_file.read().decode("utf-8")
+        except UnicodeDecodeError:
+            # Fallback for legacy files (Common in Mainframe/VB6 exports)
+            uploaded_file.seek(0)
+            return uploaded_file.read().decode("latin-1", errors="ignore")
 
-    def build_dependency_registry(self, inventory: dict):
+    @staticmethod
+    def analyze_file_role(code: str, file_name: str) -> str:
         """
-        Initial mapping to determine call graphs between files.
-        Analyzes imports, copybooks, and references.
+        Performs a heuristic scan to determine the file's architectural role.
+        Identifies 'Entry Points' vs 'Shared Libraries'.
         """
-        # In Phase 1, we identify keywords like "CALL", "COPY", "Import", "Include"
-        registry = {}
-        for file_path in inventory["source_files"]:
-            file_name = os.path.basename(file_path)
-            try:
-                with open(file_path, 'r', errors='ignore') as f:
-                    content = f.read()
-                    # Detect potential dependencies
-                    deps = re.findall(r'(?i)CALL ["\'](\w+)["\']|COPY (\w+)|import (\w+)', content)
-                    # Flatten list of tuples
-                    flat_deps = [d for sub in deps for d in sub if d]
-                    registry[file_name] = flat_deps
-            except:
-                continue
-        return registry
+        code_upper = code.upper()
+        ext = os.path.splitext(file_name)[1].lower()
+
+        # 1. COBOL Role Detection
+        if ext in ['.cbl', '.cob']:
+            if "PROCEDURE DIVISION" in code_upper and "STOP RUN" in code_upper:
+                return "Entry Program (Main)"
+            return "Shared Library (Copybook/Subroutine)"
+
+        # 2. VB6 Role Detection
+        if ext in ['.bas', '.frm', '.cls']:
+            if "SUB MAIN()" in code_upper or "PRIVATE SUB FORM_LOAD" in code_upper:
+                return "Entry Program (UI/Startup)"
+            return "Shared Library (Module/Class)"
+
+        # 3. Java Role Detection
+        if ext == '.java':
+            if "PUBLIC STATIC VOID MAIN" in code_upper:
+                return "Entry Program (Main)"
+            return "Shared Library (Utility/Bean)"
+
+        return "Source Component"
+
+    @staticmethod
+    def extract_metadata(uploaded_file, code: str) -> dict:
+        """
+        Extracts metadata used for the Ingestion Dashboard.
+        """
+        file_name = uploaded_file.name
+        role = FileIngestor.analyze_file_role(code, file_name)
+        
+        return {
+            "file_name": file_name,
+            "size_kb": round(uploaded_file.size / 1024, 2),
+            "role": role,
+            "line_count": len(code.splitlines())
+        }
+
+    @staticmethod
+    def scan_for_dependencies(code: str) -> list:
+        """
+        Scans normalized code for external references to build 
+        initial call graph hints.
+        """
+        dependencies = []
+        
+        # Patterns for COBOL CALL, COPY, VB Declare, and Java Import
+        patterns = [
+            r'(?i)CALL\s+[\'\"](\w+)[\'\"]',  # COBOL Call
+            r'(?i)COPY\s+(\w+)',              # COBOL Copybook
+            r'(?i)Declare\s+Sub\s+(\w+)',     # VB API
+            r'(?i)import\s+([\w\.]+)'         # Java Import
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, code)
+            dependencies.extend(matches)
+            
+        return list(set(dependencies))
