@@ -5,67 +5,70 @@ from typing import List, Dict, Optional, Any
 
 class FileMetadata(BaseModel):
     """
-    Metadata for the legacy file ingested.
-    Used to populate the initial scan results.
+    Metadata for the legacy file ingested in Phase 1.
+    Used to populate the initial scan results in the UI.
     """
     file_name: str
+    extension: str
+    detected_language: str
     size_kb: float
     role: str = Field(description="Entry Program or Shared Library")
     line_count: int
 
 # --- PHASE 2: FORENSIC KNOWLEDGE EXTRACTION ---
 
-class ForensicFunction(BaseModel):
-    """
-    Detailed breakdown of a legacy procedure or paragraph.
-    Captures the granular 'Forensic' details requested.
-    """
-    name: str = Field(description="Formal name of the logic block")
-    purpose: str = Field(description="The functional goal of this block")
-    logic_explanation: str = Field(description="Granular step-by-step logic breakdown")
-    inputs_outputs: str = Field(description="Variables or files accessed/modified")
-    business_rules: str = Field(description="Specific financial or logical rules enforced")
-
 class DataMapping(BaseModel):
     """
     Entry for the Forensic Data Dictionary.
-    Maps cryptic legacy variables to modern business roles.
+    Maps cryptic legacy variables (e.g. WS-RT-01) to readable business roles.
     """
-    variable: str = Field(description="Legacy variable name (e.g., WS-ACC-BAL)")
-    type: str = Field(description="Inferred data type (e.g., PIC S9(9)V99)")
-    role: str = Field(description="Meaning in business context (e.g., Current Account Balance)")
+    variable: str = Field(description="Legacy variable name")
+    type: str = Field(description="Inferred or declared data type")
+    role: str = Field(description="Meaning/Role within the business logic")
+
+class ForensicFunction(BaseModel):
+    """
+    Detailed breakdown of a legacy procedure, paragraph, or function.
+    Provides the 'granular explanation' requested.
+    """
+    name: str = Field(description="Formal identifier of the logic block")
+    purpose: str = Field(description="High-level functional goal")
+    logic_explanation: str = Field(description="Step-by-step breakdown of the internal logic")
+    inputs_outputs: str = Field(description="Variables, files, or buffers accessed")
+    business_rules: str = Field(description="Specific financial or logical rules enforced here")
 
 class ComprehensiveForensicDoc(BaseModel):
     """
-    The 'Living Specification' that replaces legacy documentation.
-    This is the core source of truth for the modernization.
+    The 'Micro-Spec' or Living Documentation.
+    The primary source of truth extracted from voluminous legacy code.
     """
-    summary: str = Field(description="Professional executive summary")
-    description: str = Field(description="Verbose, multi-paragraph business logic deep-dive")
-    functions: List[ForensicFunction] = Field(description="Granular analysis of every subroutine")
-    data_dictionary: List[DataMapping] = Field(description="Mapping of all legacy variables")
-    dependencies: List[str] = Field(description="External files, DB tables, or libraries")
-    complexity_rating: int = Field(ge=1, le=10, description="1-10 spaghetti factor")
-    confidence_score: float = Field(ge=0.0, le=1.0, description="Analysis certainty")
-    auto_approval_status: bool = Field(description="True if logic is clear for auto-conversion")
+    summary: str = Field(description="Professional executive summary of the module")
+    description: str = Field(description="Comprehensive multi-paragraph deep-dive into the business logic")
+    functions: List[ForensicFunction] = Field(description="List of all detected logical blocks")
+    data_dictionary: List[DataMapping] = Field(description="Mapping of legacy fields to business roles")
+    dependencies: List[str] = Field(description="External files, databases, or libraries referenced")
+    complexity_rating: int = Field(ge=1, le=10, description="1-10 spaghetti/complexity factor")
+    confidence_score: float = Field(ge=0.0, le=1.0, description="AI confidence in analysis accuracy")
+    auto_approval_status: bool = Field(description="True if logic is clear for auto-modernization")
 
-# --- PHASE 3 & 4: MODERNIZATION & EVALUATION ---
-
-class DashboardMetrics(BaseModel):
-    """
-    Data structure for the Evaluation Dashboard Heatmap.
-    """
-    zone: str = Field(description="GREEN, AMBER, or RED")
-    color: str = Field(description="Hex or CSS class for the zone")
-    confidence_pct: str
-    complexity: Any
+# --- PHASE 3: MODERNIZATION & TESTING ---
 
 class ModernizationResult(BaseModel):
     """
     The final output container for the unified transformation.
     """
     target_language: str
-    modern_code: str
-    unit_tests: str
-    transformation_time: float
-    confidence_score: float
+    modern_code: str = Field(description="The full, unified source code")
+    unit_tests: str = Field(description="The comprehensive unit test suite")
+    manual_review_notes: Optional[List[str]] = Field(default_factory=list)
+
+# --- PHASE 4: DASHBOARD METRICS ---
+
+class DashboardMetrics(BaseModel):
+    """
+    Data structure for the Evaluation Dashboard heatmap and metrics.
+    """
+    zone: str = Field(description="GREEN, AMBER, or RED based on risk")
+    color: str = Field(description="CSS class or Hex for the status color")
+    confidence_pct: str
+    complexity: Any = Field(description="Complexity score or label")
