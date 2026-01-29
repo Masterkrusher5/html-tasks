@@ -1,6 +1,7 @@
 import os
 import json
 import requests
+import re
 from dotenv import load_dotenv
 
 # Load Environment Variables
@@ -8,156 +9,155 @@ load_dotenv()
 
 class ValidationRefactoringAgent:
     """
-    Phase 3 & 4 Agent: Unified Code Synthesis and Validation.
-    Refactored for Azure OpenAI direct endpoint streaming.
-    Enforces Vanilla Java and Multi-Language support.
+    Phase 2, 3 & 4 Agent: Handles Forensic Documentation, Synthesis, and Testing.
+    Communicates via direct HTTP requests to a generic LLM Endpoint.
     """
     def __init__(self):
-        # Configuration from working Azure setup
+        # API Configuration from .env
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
         
-        # Connection Pooling for high-concurrency streaming
+        if not self.endpoint or not self.api_key:
+            raise ValueError("LLM_ENDPOINT or LLM_KEY not found in environment variables.")
+        
+        # Connection Pooling for high performance
         self.session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(
-            pool_connections=20, 
-            pool_maxsize=20,
-            max_retries=3
-        )
-        self.session.mount('https://', adapter)
         self.session.headers.update({
             "Content-Type": "application/json",
-            "api-key": self.api_key
+            "api-key": self.api_key  # Use "Authorization": f"Bearer {self.api_key}" if required by your gateway
         })
+
+    def _sanitize_json(self, text: str) -> dict:
+        """Helper to extract JSON from LLM response strings."""
+        try:
+            # Look for markdown JSON blocks first
+            match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
+            if match:
+                return json.loads(match.group(1))
+            
+            # Look for the first { and last }
+            start_idx = text.find("{")
+            end_idx = text.rfind("}")
+            if start_idx != -1 and end_idx != -1:
+                return json.loads(text[start_idx : end_idx + 1])
+            
+            return json.loads(text)
+        except Exception:
+            return {
+                "summary": "Parsing Error",
+                "description": "The LLM did not return a valid JSON object.",
+                "functions": [],
+                "confidence_score": 0.0
+            }
+
+    # --- PHASE 2: FORENSIC KNOWLEDGE EXTRACTION ---
+
+    def generate_documentation(self, code: str) -> dict:
+        """
+        Extracts granular technical specs from the legacy code.
+        """
+        prompt = f"""
+        Act as a Principal Systems Architect. Perform an exhaustive forensic analysis of the following legacy code.
+        SOURCE CODE:
+        \"\"\"
+        {code}
+        \"\"\"
+
+        Return ONLY a JSON object with exactly these keys:
+        summary, description, functions (list of {{name, purpose, logic_explanation, inputs_outputs, business_rules}}), 
+        data_dictionary (list of {{variable, type, role}}), dependencies, complexity_rating, 
+        confidence_score, auto_approval_status.
+        """
+        
+        payload = {
+            "messages": [
+                {"role": "system", "content": "You are a senior forensic analyst. Output strictly valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0
+        }
+
+        try:
+            response = self.session.post(self.endpoint, json=payload, timeout=90)
+            response.raise_for_status()
+            res_data = response.json()
+            content = res_data['choices'][0]['message']['content']
+            return self._sanitize_json(content)
+        except Exception as e:
+            return {
+                "summary": "Analysis Connection Error",
+                "description": f"Failed to reach LLM: {str(e)}",
+                "functions": [],
+                "confidence_score": 0.0
+            }
+
+    # --- LLM STREAMING ENGINE (SSE Parser) ---
 
     def stream_llm(self, prompt: str):
         """
-        Direct Azure SSE (Server-Sent Events) streaming parser.
-        Yields content character-by-character for real-time UI updates.
+        Standardized SSE (Server-Sent Events) parser for streaming tokens to UI.
         """
         payload = {
             "messages": [
-                {
-                    "role": "system", 
-                    "content": "You are a Senior Software Architect specializing in legacy modernization."
-                },
-                {
-                    "role": "user", 
-                    "content": prompt
-                }
+                {"role": "system", "content": "You are a Senior Architect. Provide only high-quality source code."},
+                {"role": "user", "content": prompt}
             ],
             "temperature": 0,
             "stream": True 
         }
 
         try:
-            # We use stream=True for real-time token delivery
             with self.session.post(self.endpoint, json=payload, stream=True, timeout=120) as response:
                 response.raise_for_status()
-                
                 for line in response.iter_lines():
                     if not line:
                         continue
                     
                     line_text = line.decode("utf-8").strip()
                     if line_text.startswith("data: "):
-                        content_raw = line_text[6:] # Strip 'data: ' prefix
+                        content_raw = line_text[6:] # Remove 'data: ' prefix
                         
                         if content_raw == "[DONE]":
                             break
                         
                         try:
                             chunk_json = json.loads(content_raw)
-                            if chunk_json.get('choices'):
-                                delta = chunk_json['choices'][0].get('delta', {})
-                                if 'content' in delta:
-                                    yield delta['content']
-                        except (json.JSONDecodeError, KeyError):
+                            delta = chunk_json['choices'][0].get('delta', {})
+                            if 'content' in delta:
+                                yield delta['content']
+                        except:
                             continue
-                            
         except Exception as e:
-            yield f"\n[TRANSFORMATION_ERROR: {str(e)}]"
+            yield f"\n[STREAMING_ERROR: {str(e)}]"
 
-    # --- PHASE 3: UNIFIED CODE SYNTHESIS PROMPT ---
+    # --- PROMPT GENERATORS ---
 
-    def get_unified_synthesis_prompt(self, context_doc: dict, target_lang: str) -> str:
-        """
-        Builds a language-specific synthesis prompt. 
-        Enforces Vanilla Java 17+ (No Spring Boot) if Java is selected.
-        """
-        # Specific constraints for Vanilla Java vs other languages
+    def get_synthesis_prompt(self, doc_data: dict, target_lang: str) -> str:
         constraints = ""
         if "Java" in target_lang:
-            constraints = (
-                "- Target: Vanilla Java 17+.\n"
-                "- NO SPRING BOOT: Do not use @Service, @Autowired, @Component, etc.\n"
-                "- NO EXTERNAL FRAMEWORKS: Use standard JDK libraries only (java.util, java.math, java.time).\n"
-                "- Structure: Single cohesive public class with a meaningful name."
-            )
-        elif "Python" in target_lang:
-            constraints = "- Target: Python 3.10+.\n- Use Type Hints and standard libraries.\n- Structure: Single clean module."
-        elif "C#" in target_lang:
-            constraints = "- Target: .NET Core 6+.\n- Structure: Single cohesive class with file-scoped namespaces."
-        else:
-            constraints = f"- Use idiomatic standards for {target_lang}."
-
-        return f"""
-        TASK: Synthesize a modern, production-ready {target_lang} source file from the 
-        provided Forensic Specification.
+            constraints = "Use Vanilla Java 17+, standard libraries only. NO Spring Boot/Annotations."
         
-        FORENSIC SPECIFICATION:
-        \"\"\"{json.dumps(context_doc)}\"\"\"
+        return f"""
+        TASK: Synthesize a cohesive {target_lang} file from this forensic spec:
+        {json.dumps(doc_data)}
         
         CONSTRAINTS:
         {constraints}
-        - Preserve ALL business logic, mathematical formulas, and conditional branching exactly as identified in the spec.
-        - Refactor procedural 'spaghetti' logic into modular, clean methods.
-        - Handle Data Mapping according to the provided Data Dictionary.
-        - Return ONLY the full code content inside a single file.
+        - Maintain exact business formulas and logical branching.
+        - Return ONLY the full source code.
         """
 
-    # --- PHASE 4: UNIFIED UNIT TEST PROMPT ---
-
-    def get_unified_test_prompt(self, modern_code: str, target_lang: str) -> str:
-        """
-        Maps the target language to the appropriate testing framework.
-        """
-        # Framework Mapping
-        framework_map = {
-            "Java": "JUnit 5",
-            "Python": "pytest",
-            "C#": "xUnit",
-            "TypeScript": "Jest"
-        }
-        
-        base_lang = target_lang.split()[0] # e.g., "Java (Vanilla)" -> "Java"
-        framework = framework_map.get(base_lang, "standard testing library")
-        
+    def get_test_prompt(self, modern_code: str, target_lang: str) -> str:
+        framework = "JUnit 5" if "Java" in target_lang else "pytest"
         return f"""
-        TASK: Generate a single comprehensive {framework} test file for the provided {target_lang} code.
-        
-        CODE TO TEST:
-        \"\"\"{modern_code}\"\"\"
-        
-        REQUIREMENTS:
-        1. Use {framework} assertions.
-        2. Include test cases for successful execution and boundary/edge cases identified in the logic.
-        3. Use standard mocking patterns if external file/IO dependencies were synthesized.
-        4. Return ONLY the test code content.
+        TASK: Generate a single {framework} test file for this code:
+        {modern_code}
+        Return ONLY the test code content.
         """
 
-    # --- PHASE 4: AUTO-CORRECTION (Reflection) ---
-
-    def refine_code(self, code: str, error_log: str, target_lang: str):
-        """
-        Self-correction loop if the generated code has syntax or logical errors.
-        """
-        prompt = f"""
-        The following {target_lang} code has errors. Fix them while maintaining business rules.
-        ERROR: {error_log}
-        CODE: {code}
-        """
-        full_fix = ""
-        for delta in self.stream_llm(prompt):
-            full_fix += delta
-        return full_fix
+    def calculate_dashboard_metrics(self, doc_data: dict) -> dict:
+        """Dashboard logic."""
+        conf = doc_data.get('confidence_score', 0)
+        auto = doc_data.get('auto_approval_status', False)
+        zone, color = ("GREEN", "green") if (auto and conf >= 0.85) else (("AMBER", "orange") if conf >= 0.6 else ("RED", "red"))
+        return {"zone": zone, "color": color, "confidence_pct": f"{conf*100:.0f}%", "complexity": doc_data.get('complexity_rating', 'N/A')}
