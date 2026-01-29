@@ -5,6 +5,7 @@ import time
 from dotenv import load_dotenv
 
 # --- THREADING CONTEXT IMPORTS ---
+# Necessary to prevent 'NoSessionContext' errors when background threads update the UI
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 
 # Import specialized core modules
@@ -16,7 +17,7 @@ load_dotenv()
 
 # 1. Page Configuration
 st.set_page_config(
-    page_title="Ultra-Parallel Modernizer",
+    page_title="Forensic Modernizer Pro",
     page_icon="🛡️",
     layout="wide"
 )
@@ -38,9 +39,9 @@ def get_extension(stack):
 
 # --- MAIN UI INTERFACE ---
 st.title("🛡️ Forensic Legacy Modernizer Pro")
-st.markdown("Parallel Logic Extraction ➡️ Segmented Synthesis ➡️ Complete File Assembly")
+st.markdown("Dual-Pipeline Parallel Engine: **Documentation** and **Synthesis** streams independently.")
 
-# Sidebar
+# --- SIDEBAR CONFIGURATION ---
 with st.sidebar:
     st.header("Pipeline Settings")
     target_stack = st.selectbox("Target Architecture", [
@@ -49,15 +50,20 @@ with st.sidebar:
         "C# (.NET Core)"
     ])
     st.divider()
+    st.markdown("**Performance Mode:**")
+    st.write("🚀 Parallel Threading: Enabled")
+    st.write("🚀 Truncation Protection: Active")
+    
     if st.button("Reset Application"):
         st.session_state.clear()
         st.rerun()
 
-# --- STEP 1: INGESTION ---
+# --- STEP 1: FILE INGESTION ---
 st.subheader("📁 Step 1: Ingest Legacy Source")
-uploaded_file = st.file_uploader("Upload Source File", type=['cbl', 'cob', 'vb', 'java', 'txt'])
+uploaded_file = st.file_uploader("Upload Legacy File", type=['cbl', 'cob', 'vb', 'java', 'txt'])
 
 if uploaded_file:
+    # Handle file processing and persistence
     if "clean_code" not in st.session_state or st.session_state.get("current_file") != uploaded_file.name:
         raw_content = st.session_state.ingestor.read_uploaded_file(uploaded_file)
         st.session_state.clean_code = st.session_state.ingestor.normalize(raw_content)
@@ -70,136 +76,122 @@ if uploaded_file:
     c2.metric("Detected Role", meta['role'])
     c3.metric("Payload Size", f"{meta['size_kb']} KB")
 
-    if st.button("📝 Phase 1: Parallel Forensic Analysis", type="primary", use_container_width=True):
-        with st.status("Analyzing voluminous code using parallel extraction...") as status:
-            doc_results = st.session_state.agent.generate_documentation(st.session_state.clean_code)
-            st.session_state.doc = doc_results
-            status.update(label="Forensic Analysis Complete!", state="complete")
-
-# --- STEP 2: DOCUMENTATION DASHBOARD ---
-if "doc" in st.session_state:
-    doc = st.session_state.doc
-    metrics = st.session_state.agent.calculate_dashboard_metrics(doc)
-    
-    st.divider()
-    st.header("📑 Phase 2: Technical Specification")
-    
-    m1, m2, m3 = st.columns(3)
-    with m1:
-        st.metric("AI Confidence", metrics['confidence_pct'])
-    with m2:
-        st.markdown(f"**Dashboard Status:** :{metrics['color']}[{metrics['zone']}]")
-    with m3:
-        st.metric("Legacy Complexity", f"{metrics['complexity']}/10")
-
-    # Display 300-400 Word Technical Summary
-    st.subheader("1. Detailed Executive System Summary")
-    st.info(doc.get('summary', 'Summary extraction failed.'))
-    
-    st.subheader("2. Logical Execution Flow")
-    st.markdown(doc.get('description', 'Deep-dive failed.'))
-
-    tab_func, tab_vars = st.tabs(["⚙️ Functional Analysis", "📊 Data Dictionary"])
-    with tab_func: st.table(doc.get("functions", []))
-    with tab_vars: st.table(doc.get("data_dictionary", []))
-
-    # --- STEP 3: SEGMENTED PARALLEL SYNTHESIS ---
-    st.divider()
-    st.header(f"🚀 Phase 3: Segmented Modernization ({target_stack})")
-    st.caption("Status: Multi-stream assembly enabled to prevent token truncation.")
-    
-    if st.button("Execute Parallel Transformation", type="primary", use_container_width=True):
+    # --- STEP 2: START PARALLEL MODERNIZATION ---
+    if st.button("🚀 Start Dual-Pipeline Modernization", type="primary", use_container_width=True):
         ctx = get_script_run_ctx()
         
-        # UI Slots for the dynamic dual-stream assembly
-        col_code, col_test = st.columns(2)
-        with col_code:
-            st.subheader("🛠️ Unified Source Code")
-            skel_slot = st.empty()
-            logic_slot = st.empty()
-            footer_slot = st.empty()
-        with col_test:
-            st.subheader("🧪 Automated Test Suite")
-            test_slot = st.empty()
-
-        # Shared containers for final assembly and download
-        synthesis_results = {"skeleton": "", "logic": "", "tests": ""}
-
-        def skeleton_worker():
-            agent = st.session_state.agent
-            prompt = agent.get_skeleton_prompt(doc, target_stack)
-            for delta in agent.stream_llm(prompt):
-                synthesis_results["skeleton"] += delta
-                with ui_lock:
-                    skel_slot.code(synthesis_results["skeleton"] + " ▌", language="java")
-            with ui_lock: skel_slot.code(synthesis_results["skeleton"])
-
-        def logic_worker():
-            agent = st.session_state.agent
-            prompt = agent.get_methods_prompt(doc, target_stack)
-            for delta in agent.stream_llm(prompt):
-                synthesis_results["logic"] += delta
-                with ui_lock:
-                    logic_slot.code(synthesis_results["logic"] + " ▌", language="java")
-            with ui_lock: 
-                logic_slot.code(synthesis_results["logic"])
-                # Add closing brace for Java/C#
-                if "Java" in target_stack or "C#" in target_stack:
-                    footer_slot.code("}")
-
-        # Start Parallel Synthesis Threads
-        t1 = threading.Thread(target=skeleton_worker)
-        t2 = threading.Thread(target=logic_worker)
-        add_script_run_ctx(t1, ctx); add_script_run_ctx(t2, ctx)
+        # --- UI LAYOUT (VERTICAL STACK) ---
         
-        t1.start(); t2.start()
+        # TOP SECTION: DOCUMENTATION
+        st.divider()
+        st.subheader("📑 Phase 1: Technical Documentation (300-400 words)")
+        doc_slot = st.empty()
+        metrics_slot = st.empty()
         
-        with st.spinner("Assembling file architecture in parallel..."):
-            t1.join(); t2.join()
+        # BOTTOM SECTION: CODE SYNTHESIS
+        st.divider()
+        st.subheader(f"🛠️ Phase 2: Unified Code Synthesis ({target_stack})")
+        code_slot = st.empty()
+        
+        st.subheader("🧪 Phase 3: Automated Test Suite")
+        test_slot = st.empty()
 
-        # Assemble Final Code for testing and download
-        closing = "}" if ("Java" in target_stack or "C#" in target_stack) else ""
-        final_code = f"{synthesis_results['skeleton']}\n{synthesis_results['logic']}\n{closing}"
-        st.session_state.assembled_code = final_code
+        # Shared containers for results and downloads
+        results = {"doc": "", "code": "", "tests": ""}
 
-        # Start Testing Phase
+        # --- WORKER 1: THE ANALYST (Documentation) ---
+        def analyst_worker():
+            agent = st.session_state.agent
+            prompt = agent.get_documentation_prompt(st.session_state.clean_code)
+            for delta in agent.stream_llm(prompt, max_tokens=2000):
+                results["doc"] += delta
+                with ui_lock:
+                    doc_slot.markdown(results["doc"] + " ▌")
+            
+            with ui_lock:
+                doc_slot.markdown(results["doc"])
+                # Generate heuristic metrics once documentation is finished
+                metrics = agent.calculate_dashboard_metrics(results["doc"])
+                metrics_slot.success(f"**Confidence:** {metrics['confidence_pct']} | **Zone:** {metrics['zone']}")
+                st.session_state.final_doc = results["doc"]
+
+        # --- WORKER 2: THE CODER (Source-to-Target) ---
+        def coder_worker():
+            agent = st.session_state.agent
+            prompt = agent.get_synthesis_prompt(st.session_state.clean_code, target_stack)
+            lang_key = get_extension(target_stack)
+            
+            for delta in agent.stream_llm(prompt, max_tokens=4000):
+                results["code"] += delta
+                with ui_lock:
+                    code_slot.code(results["code"] + " ▌", language=lang_key)
+            
+            with ui_lock:
+                code_slot.code(results["code"], language=lang_key)
+                st.session_state.final_code = results["code"]
+
+        # --- LAUNCH PARALLEL THREADS ---
+        t1 = threading.Thread(target=analyst_worker)
+        t2 = threading.Thread(target=coder_worker)
+        
+        add_script_run_ctx(t1, ctx)
+        add_script_run_ctx(t2, ctx)
+        
+        t1.start()
+        t2.start()
+        
+        # Wait for the Coder to finish so we can generate tests based on the code
+        t2.join() 
+        
+        # --- WORKER 3: THE QA (Triggered after Code is ready) ---
         def test_worker():
             agent = st.session_state.agent
-            prompt = agent.get_test_prompt(final_code, target_stack)
-            for delta in agent.stream_llm(prompt):
-                synthesis_results["tests"] += delta
+            lang_key = get_extension(target_stack)
+            prompt = agent.get_test_prompt(results["code"], target_stack)
+            
+            for delta in agent.stream_llm(prompt, max_tokens=2000):
+                results["tests"] += delta
                 with ui_lock:
-                    test_slot.code(synthesis_results["tests"] + " ▌", language="java")
-            with ui_lock: test_slot.code(synthesis_results["tests"])
-            st.session_state.final_tests = synthesis_results["tests"]
+                    test_slot.code(results["tests"] + " ▌", language=lang_key)
+            
+            with ui_lock:
+                test_slot.code(results["tests"], language=lang_key)
+                st.session_state.final_tests = results["tests"]
 
         t3 = threading.Thread(target=test_worker)
         add_script_run_ctx(t3, ctx)
-        t3.start(); t3.join()
+        t3.start()
+        t3.join()
         
-        st.success("Modernization Complete! File is unified and assembled.")
+        st.success("🏁 All modernization pipelines completed successfully.")
 
-# --- STEP 4: DOWNLOAD PROVISION ---
-if "assembled_code" in st.session_state:
+# --- STEP 3: DOWNLOAD & PERSISTENCE ---
+if "final_code" in st.session_state:
     st.divider()
-    st.subheader("📥 Step 4: Download Results")
+    st.subheader("📥 Step 3: Download Modernized Artifacts")
     
     ext = get_extension(target_stack)
     
     dl_col1, dl_col2 = st.columns(2)
     with dl_col1:
         st.download_button(
-            label=f"💾 Download Modernized {ext.upper()} File",
-            data=st.session_state.assembled_code,
+            label=f"💾 Download {ext.upper()} Source",
+            data=st.session_state.final_code,
             file_name=f"modernized_component.{ext}",
             mime="text/plain",
             use_container_width=True
         )
     with dl_col2:
-        st.download_button(
-            label="🧪 Download Unit Test Suite",
-            data=st.session_state.get("final_tests", ""),
-            file_name=f"test_suite.{ext}",
-            mime="text/plain",
-            use_container_width=True
-        )
+        if "final_tests" in st.session_state:
+            st.download_button(
+                label="🧪 Download Unit Tests",
+                data=st.session_state.final_tests,
+                file_name=f"test_suite.{ext}",
+                mime="text/plain",
+                use_container_width=True
+            )
+
+# Show logic recap if doc exists in state
+if "final_doc" in st.session_state:
+    with st.expander("🔍 View Technical Documentation Archive"):
+        st.markdown(st.session_state.final_doc)
