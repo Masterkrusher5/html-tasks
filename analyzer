@@ -9,8 +9,9 @@ load_dotenv()
 
 class UnifiedOpenAIAgent:
     """
-    Universal Intelligence Engine for Forensic Modernization.
-    Refactored to produce verbose documentation and high-fidelity, complete source code.
+    Forensic Modernization Engine.
+    Communicates via direct HTTP requests to any LLM endpoint.
+    Produces high-fidelity documentation and complete, runnable source files.
     """
     def __init__(self):
         # Configuration from .env
@@ -20,7 +21,7 @@ class UnifiedOpenAIAgent:
         if not self.endpoint or not self.api_key:
             return
 
-        # Connection Pooling for high performance
+        # Connection Pooling for high performance and streaming stability
         self.session = requests.Session()
         self.session.headers.update({
             "api-key": self.api_key,
@@ -28,9 +29,9 @@ class UnifiedOpenAIAgent:
         })
 
     def _sanitize_json(self, text: str) -> dict:
-        """Robustly extracts JSON from LLM responses, cleaning any markdown wrappers."""
+        """Extracts JSON from LLM response, handling markdown blocks and noise."""
         try:
-            # Try to find content inside markdown code blocks first
+            # Attempt to find content inside markdown code blocks
             match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
             if match:
                 return json.loads(match.group(1))
@@ -44,109 +45,110 @@ class UnifiedOpenAIAgent:
             return json.loads(text)
         except Exception:
             return {
-                "summary": "Forensic Parsing Error",
-                "description": "The AI response failed JSON validation. Raw output: " + text[:500],
+                "summary": "Forensic Parse Failure",
+                "description": "The AI response failed JSON validation. Raw output follows: " + text[:500],
                 "functions": [],
                 "data_dictionary": [],
                 "confidence_score": 0.0
             }
 
-    # --- PHASE 2: FORENSIC KNOWLEDGE EXTRACTION ---
+    # --- PHASE 2: EXHAUSTIVE FORENSIC ANALYSIS ---
 
     def generate_documentation(self, code: str) -> dict:
         """
-        Extracts exhaustive business logic specs.
-        DEMAND: Long, detailed plain-text summary (300+ words).
+        Phase 1: Deep-Dive Logic Extraction.
+        Demands a 300+ word technical narrative with NO HTML.
         """
         prompt = f"""
-        Act as a Principal Systems Architect. Perform an exhaustive forensic analysis of the provided legacy code.
-        
+        Act as a Principal Systems Architect. Perform an EXHAUSTIVE forensic analysis of the provided legacy code.
+        Your goal is to extract every logical branch, variable role, and business rule.
+
         SOURCE CODE:
         \"\"\"
         {code}
         \"\"\"
 
-        Provide a structured JSON object with EXACTLY these keys:
-        1. "summary": Provide a LONG, multi-paragraph technical summary (at least 300 words). 
-           Detail the business domain, system goals, architectural pattern of the legacy code, 
-           and how it handles end-to-end processing. DO NOT use any HTML tags.
-        2. "description": A verbose deep-dive into the execution flow, state transitions, and I/O.
-        3. "functions": A list of every procedure/paragraph containing:
-           - "name": Identifier.
-           - "purpose": Detailed goal.
-           - "logic_explanation": Granular step-by-step breakdown.
-           - "business_rules": Specific logic/math rules.
-        4. "data_dictionary": A list of every key variable found:
+        Return a JSON object with EXACTLY these keys:
+        1. "summary": Provide a LONG (minimum 300 words), multi-paragraph technical summary. 
+           Detail the business domain, system architecture, data flow, and processing strategy. 
+           DO NOT use HTML tags. Use plain text or Markdown only.
+        2. "description": A verbose technical deep-dive into logic, state management, and side effects.
+        3. "functions": A list of every procedure/paragraph/subroutine containing:
+           - "name": Formal identifier.
+           - "purpose": Functional goal.
+           - "logic_explanation": Step-by-step logic breakdown.
+           - "business_rules": Specific logical/financial rules enforced.
+        4. "data_dictionary": A list of every variable found:
            - "variable": Name.
-           - "role": Its business meaning and purpose.
-        5. "dependencies": List of external files/DBs.
+           - "role": Its business meaning and purpose in the system.
+        5. "dependencies": List of external files, databases, or API calls.
         6. "complexity_rating": Integer (1-10).
-        7. "confidence_score": Float (0.0-1.0).
+        7. "confidence_score": Float (0.0 to 1.0).
         8. "auto_approval_status": Boolean.
 
-        Ensure the summary and description are extremely detailed.
         Return ONLY the JSON object.
         """
 
         payload = {
             "messages": [
-                {"role": "system", "content": "You are a senior forensic systems analyst. You write long, detailed documentation without using HTML."},
+                {"role": "system", "content": "You are a professional systems analyst. You write extremely long, technical, plain-text documentation without HTML."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0
         }
 
         try:
-            response = self.session.post(self.endpoint, json=payload, timeout=90)
+            response = self.session.post(self.endpoint, json=payload, timeout=120)
             response.raise_for_status()
-            res_data = response.json()
-            content = res_data['choices'][0]['message']['content']
+            content = response.json()['choices'][0]['message']['content']
             return self._sanitize_json(content)
         except Exception as e:
             return {
-                "summary": "Connection Error",
-                "description": f"Failed to reach the LLM Endpoint: {str(e)}",
-                "functions": [],
-                "confidence_score": 0.0
+                "summary": f"Connection Failure: {str(e)}",
+                "description": "Check your LLM_ENDPOINT and LLM_KEY configuration."
             }
 
-    # --- PHASE 3: HIGH-FIDELITY CODE SYNTHESIS ---
+    # --- PHASE 3: UNSTOPPABLE FULL-FILE SYNTHESIS ---
 
-    def get_synthesis_prompt(self, doc_data: dict, target_lang: str) -> str:
+    def get_synthesis_prompt(self, doc_data: dict, target_stack: str) -> str:
         """
-        Constructs the prompt for a UNIFIED, COMPLETE FILE.
-        DEMAND: Runnable class structure, not just functions.
+        Builds the prompt for a COMPLETE, RUNNABLE file.
+        Explicitly forbids snippets or fragments.
         """
-        java_constraints = ""
-        if "Java" in target_lang:
-            java_constraints = (
+        java_rules = ""
+        if "Java" in target_stack:
+            java_rules = (
                 "- Target: Vanilla Java 17+.\n"
-                "- NO SPRING BOOT: Do not use @Service, @Component, etc.\n"
-                "- STANDARD LIBRARIES ONLY: Use java.util, java.math.BigDecimal, java.time, etc.\n"
+                "- NO SPRING BOOT: Do not use @Service, @Autowired, or any annotations.\n"
+                "- STANDARD JDK ONLY: Use java.util, java.math, java.time, etc.\n"
             )
 
         return f"""
-        TASK: Synthesize the COMPLETE, RUNNABLE source code for a single {target_lang} file.
-        
-        SPECIFICATION BLUEPRINT:
+        TASK: YOU MUST GENERATE THE COMPLETE, RUNNABLE SOURCE CODE FOR A SINGLE {target_stack} FILE.
+        FAILURE IS NOT AN OPTION. DO NOT JUST GENERATE FUNCTIONS. 
+
+        INPUT FORENSIC SPECIFICATION:
         {json.dumps(doc_data)}
-        
-        CRITICAL ARCHITECTURAL REQUIREMENTS:
-        1. COMPLETE FILE STRUCTURE: You MUST provide the full file, including package declarations, all necessary imports, and the public class/module definition.
-        2. DO NOT JUST GENERATE FUNCTIONS: The output must be a cohesive, compilable program that can be executed.
-        3. GLOBAL STATE: Map all legacy global variables (found in the data dictionary) to PRIVATE CLASS MEMBER VARIABLES to maintain state throughout the lifecycle.
-        4. BUSINESS LOGIC: Replicate all mathematical formulas and logical branching identified in the 'Forensic Spec' with 100% accuracy.
-        5. CLEAN CODE: Use meaningful names, modularize methods, and implement proper error handling (e.g. Try-Catch).
-        6. {java_constraints}
-        
-        Return ONLY the full source code content. No conversational text.
+
+        STRICT ARCHITECTURAL REQUIREMENTS:
+        1. COMPLETE FILE STRUCTURE: You MUST provide the FULL file including package declarations, all necessary imports, and the public class definition.
+        2. ENCAPSULATION & STATE: Map all legacy global variables (from the data dictionary) to PRIVATE CLASS MEMBER VARIABLES to maintain logical state.
+        3. 100% LOGIC PARITY: Every mathematical formula, 'IF' branch, and data transformation from the forensic spec must be implemented accurately.
+        4. SINGLE FILE: The output must be a cohesive, standalone unit that can be compiled/run.
+        5. CLEAN CODE: Modularize the logic into private methods while keeping the public entry method identical to the legacy entry point.
+        6. {java_rules}
+
+        Return ONLY the source code. Start immediately with the code. No conversational text.
         """
 
     def stream_llm(self, prompt: str):
-        """Standardized SSE Parser for streaming code tokens in real-time."""
+        """
+        Generic SSE (Server-Sent Events) parser for real-time code streaming.
+        Handles the standard Azure/OpenAI 'data: ' stream format.
+        """
         payload = {
             "messages": [
-                {"role": "system", "content": "You are a Senior Modernization Architect. Output ONLY valid, complete source code."},
+                {"role": "system", "content": "You are a Senior Software Architect. You produce complete, accurate source code files."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0,
@@ -154,9 +156,9 @@ class UnifiedOpenAIAgent:
         }
 
         try:
-            with self.session.post(self.endpoint, json=payload, stream=True, timeout=120) as response:
-                response.raise_for_status()
-                for line in response.iter_lines():
+            with self.session.post(self.endpoint, json=payload, stream=True, timeout=180) as resp:
+                resp.raise_for_status()
+                for line in resp.iter_lines():
                     if not line:
                         continue
                     
@@ -167,46 +169,38 @@ class UnifiedOpenAIAgent:
                             break
                         try:
                             chunk_json = json.loads(content_raw)
-                            delta = chunk_json['choices'][0].get('delta', {})
-                            if 'content' in delta:
-                                yield delta['content']
+                            delta = chunk_json['choices'][0].get('delta', {}).get('content', '')
+                            if delta:
+                                yield delta
                         except:
                             continue
         except Exception as e:
             yield f"\n[STREAMING_ERROR: {str(e)}]"
 
-    # --- PHASE 4: COMPREHENSIVE TESTING ---
+    # --- PHASE 4: COMPLETE TESTING ---
 
-    def get_test_prompt(self, modern_code: str, target_lang: str) -> str:
+    def get_test_prompt(self, modern_code: str, target_stack: str) -> str:
         """Demands a full test suite for the synthesized file."""
-        framework = "JUnit 5" if "Java" in target_lang else "pytest"
+        framework = "JUnit 5" if "Java" in target_stack else "pytest"
         return f"""
-        TASK: Generate a single comprehensive {framework} test file for the modernized code below.
+        TASK: Generate a single comprehensive {framework} test file for the modernized code provided.
         
-        CODE TO TEST:
+        CODE:
         {modern_code}
         
         REQUIREMENTS:
-        1. Ensure 100% logical coverage.
-        2. Include test cases for initialization, main business logic paths, and error/edge cases.
-        3. Return ONLY the full test source code content.
+        - Ensure 100% path coverage.
+        - Include test cases for initialization, successful processing, and edge-case errors.
+        - Return ONLY the full test source code content.
         """
 
     def calculate_dashboard_metrics(self, doc_data: dict) -> dict:
-        """Dashboard logic."""
+        """Dashboard Heatmap logic."""
         conf = doc_data.get('confidence_score', 0)
-        auto = doc_data.get('auto_approval_status', False)
-        
-        if auto and conf >= 0.85:
-            zone, color = "GREEN (Auto-Approved)", "green"
+        # We calculate zones, but we never let them block the user.
+        if conf >= 0.85:
+            return {"zone": "GREEN", "color": "green", "confidence_pct": f"{conf*100:.1f}%", "complexity": doc_data.get('complexity_rating', 5)}
         elif conf >= 0.60:
-            zone, color = "AMBER (Review Recommended)", "orange"
+            return {"zone": "AMBER", "color": "orange", "confidence_pct": f"{conf*100:.1f}%", "complexity": doc_data.get('complexity_rating', 7)}
         else:
-            zone, color = "RED (Manual Check Required)", "red"
-            
-        return {
-            "zone": zone,
-            "color": color,
-            "confidence_pct": f"{conf * 100:.0f}%",
-            "complexity": doc_data.get('complexity_rating', 'N/A')
-        }
+            return {"zone": "RED (High Risk)", "color": "red", "confidence_pct": f"{conf*100:.1f}%", "complexity": doc_data.get('complexity_rating', 9)}
