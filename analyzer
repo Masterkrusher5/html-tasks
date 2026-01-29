@@ -9,43 +9,53 @@ load_dotenv()
 
 class UnifiedOpenAIAgent:
     """
-    Forensic Intelligence Engine for Azure OpenAI.
-    Performs deep-dive technical and functional analysis of legacy source code.
+    Universal Intelligence Engine.
+    Communicates via raw HTTP requests to any OpenAI-compatible LLM endpoint.
+    Supports high-detail forensic analysis and real-time streaming.
     """
     def __init__(self):
-        # Configuration from Azure environment
+        # Configuration from .env
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
         
-        # Connection Pooling for high-stability API calls
+        if not self.endpoint or not self.api_key:
+            raise ValueError("LLM_ENDPOINT or LLM_KEY not found in environment variables.")
+
+        # Connection Pooling for high performance
         self.session = requests.Session()
+        # Most enterprise gateways use 'api-key'. 
+        # For standard OpenAI, change to: "Authorization": f"Bearer {self.api_key}"
         self.session.headers.update({
-            "Content-Type": "application/json",
-            "api-key": self.api_key
+            "api-key": self.api_key,
+            "Content-Type": "application/json"
         })
+        print(f"✅ Analyzer initialized using Endpoint: {self.endpoint}")
 
     def _sanitize_json(self, text: str) -> dict:
-        """
-        Extracts and parses JSON from the LLM response.
-        Handles markdown wrappers (```json ... ```).
-        """
+        """Robust JSON parsing with markdown cleanup."""
         try:
-            # 1. Try direct parsing
+            # 1. Attempt direct parse
             return json.loads(text)
         except json.JSONDecodeError:
             try:
-                # 2. Strip markdown code blocks and try again
-                clean_text = re.sub(r'```json|```', '', text).strip()
-                return json.loads(clean_text)
-            except Exception:
-                # 3. Last resort: Regex search for the first { and last }
-                match = re.search(r'\{.*\}', text, re.DOTALL)
+                # 2. Strip markdown code blocks (```json ... ```) if present
+                match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
                 if match:
-                    return json.loads(match.group())
+                    return json.loads(match.group(1))
+                
+                # 3. Fallback: Find the first { and last }
+                start = text.find("{")
+                end = text.rfind("}")
+                if start != -1 and end != -1:
+                    return json.loads(text[start:end+1])
+                
+                return {"summary": "Format Error", "description": "LLM did not return valid JSON."}
+            except Exception:
                 return {
                     "summary": "Parsing Error",
-                    "description": "The AI response could not be parsed as structured JSON.",
+                    "description": "Critical failure in logic extraction.",
                     "functions": [],
+                    "data_dictionary": [],
                     "confidence_score": 0.0
                 }
 
@@ -53,12 +63,11 @@ class UnifiedOpenAIAgent:
 
     def generate_documentation(self, code: str) -> dict:
         """
-        Performs a deep-dive forensic analysis to create a Living Specification.
-        Extracts business rules, data dictionaries, and logic flows.
+        Generates a granular, high-detail technical specification via HTTP POST.
         """
         prompt = f"""
         Act as a Principal Systems Architect and Forensic Software Engineer. 
-        Perform an exhaustive technical and functional analysis of the following legacy code.
+        Perform an exhaustive technical analysis of the following legacy source code.
 
         SOURCE CODE:
         \"\"\"
@@ -66,80 +75,104 @@ class UnifiedOpenAIAgent:
         \"\"\"
 
         Provide a structured JSON output with the following EXACT keys:
-        1. "summary": A professional executive summary of the code's objective.
-        2. "description": A comprehensive, multi-paragraph deep-dive into the end-to-end 
-           business logic. Explain the 'WHY' behind the operations, the architectural 
-           data flow, and state management.
-        3. "functions": A list of every procedure, paragraph, or subroutine containing:
-           - "name": Formal identifier.
-           - "purpose": Detailed functional goal.
-           - "logic_explanation": A granular, step-by-step breakdown of the logic inside.
-           - "inputs_outputs": Specific variables or files accessed/modified.
-           - "business_rules": Specific financial or logical rules enforced in this block.
-        4. "data_dictionary": A list of key variables/fields found:
-           - "variable": Legacy name.
-           - "type": Inferred data type.
-           - "role": Role/Meaning within the business context.
-        5. "dependencies": External files (e.g., SELECT/ASSIGN), DB tables, or libraries.
-        6. "complexity_rating": Integer (1-10) based on nesting and spaghetti factors.
-        7. "confidence_score": Float (0.0 to 1.0) representing analysis certainty.
-        8. "auto_approval_status": Boolean (True if logic is clear and confidence > 0.85).
+        summary, description, functions (list of {{name, purpose, logic_explanation, inputs_outputs, business_rules}}), 
+        data_dictionary (list of {{variable, type, role}}), dependencies, complexity_rating, 
+        confidence_score, auto_approval_status.
 
         Ensure 'description' and 'logic_explanation' are extremely verbose and technical.
         Return ONLY the JSON object.
         """
-        
+
         payload = {
             "messages": [
-                {
-                    "role": "system", 
-                    "content": "You are a Forensic Systems Architect. You output strictly valid, detailed JSON."
-                },
-                {
-                    "role": "user", 
-                    "content": prompt
-                }
+                {"role": "system", "content": "You are a forensic systems architect. Output strictly valid JSON."},
+                {"role": "user", "content": prompt}
             ],
             "temperature": 0
+            # Optional: "response_format": {"type": "json_object"} 
+            # (only if your endpoint supports it)
         }
 
         try:
-            # Azure OpenAI direct call
             response = self.session.post(self.endpoint, json=payload, timeout=90)
             response.raise_for_status()
-            
-            raw_content = response.json()['choices'][0]['message']['content']
-            return self._sanitize_json(raw_content)
-
+            res_data = response.json()
+            content = res_data['choices'][0]['message']['content']
+            return self._sanitize_json(content)
         except Exception as e:
             return {
-                "summary": "Analysis Connection Error",
-                "description": f"Failed to perform forensic analysis: {str(e)}",
+                "summary": "Connection Error",
+                "description": f"Failed to reach LLM Endpoint: {str(e)}",
                 "functions": [],
-                "data_dictionary": [],
-                "confidence_score": 0.0,
-                "auto_approval_status": False
+                "confidence_score": 0.0
             }
 
+    # --- PHASE 3 & 4: STREAMING ENGINE (SSE Parser) ---
+
+    def stream_llm(self, prompt: str):
+        """
+        Generic Server-Sent Events (SSE) parser for streaming responses.
+        Yields tokens in real-time for the UI.
+        """
+        payload = {
+            "messages": [
+                {"role": "system", "content": "You are a Senior Architect. Provide only code."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0,
+            "stream": True
+        }
+
+        try:
+            with self.session.post(self.endpoint, json=payload, stream=True, timeout=120) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line:
+                        continue
+                    
+                    line_text = line.decode("utf-8").strip()
+                    if line_text.startswith("data: "):
+                        data_payload = line_text[6:] # Strip the 'data: ' prefix
+                        
+                        if data_payload == "[DONE]":
+                            break
+                        
+                        try:
+                            chunk_json = json.loads(data_payload)
+                            delta = chunk_json['choices'][0].get('delta', {})
+                            if 'content' in delta:
+                                yield delta['content']
+                        except:
+                            continue
+        except Exception as e:
+            yield f"\n[STREAMING_ERROR: {str(e)}]"
+
+    def get_synthesis_prompt(self, doc_data: dict, target_lang: str) -> str:
+        constraints = ""
+        if "Java" in target_lang:
+            constraints = (
+                "Use Vanilla Java 17+ (JDK standard libraries only). "
+                "DO NOT use Spring Boot, Spring Annotations, or third-party frameworks."
+            )
+        else:
+            constraints = f"Use standard {target_lang} best practices."
+
+        return f"""
+        TASK: Synthesize a cohesive {target_lang} file from this forensic spec:
+        {json.dumps(doc_data)}
+        
+        CONSTRAINTS:
+        - {constraints}
+        - Maintain exact business formulas and logical branching.
+        - Return ONLY the full source code content.
+        """
+
+    def get_test_prompt(self, modern_code: str, target_lang: str) -> str:
+        framework = "JUnit 5" if "Java" in target_lang else "pytest"
+        return f"Generate a {framework} test file for this code:\n{modern_code}\nReturn ONLY code."
+
     def calculate_dashboard_metrics(self, doc_data: dict) -> dict:
-        """
-        Maps the forensic analysis data to Dashboard Heatmap zones.
-        Determines if the module is Green, Amber, or Red.
-        """
         conf = doc_data.get('confidence_score', 0)
         auto = doc_data.get('auto_approval_status', False)
-        
-        # Quality Gate Logic
-        if auto and conf >= 0.85:
-            zone, color = "GREEN (Auto-Approved)", "green"
-        elif conf >= 0.60:
-            zone, color = "AMBER (Review Recommended)", "orange"
-        else:
-            zone, color = "RED (Manual Check Required)", "red"
-            
-        return {
-            "zone": zone,
-            "color": color,
-            "confidence_pct": f"{conf * 100:.1f}%",
-            "complexity": doc_data.get('complexity_rating', 'N/A')
-        }
+        zone, color = ("GREEN", "green") if (auto and conf >= 0.85) else (("AMBER", "orange") if conf >= 0.6 else ("RED", "red"))
+        return {"zone": zone, "color": color, "confidence_pct": f"{conf*100:.0f}%", "complexity": doc_data.get('complexity_rating', 'N/A')}
