@@ -9,9 +9,9 @@ load_dotenv()
 
 class UnifiedOpenAIAgent:
     """
-    Universal Intelligence Engine.
-    Features: SSE Streaming, JSON Repair Logic, and Full-File Synthesis.
-    Works with any OpenAI-compatible custom endpoint.
+    Forensic Modernization Engine.
+    Communicates via direct HTTP requests to any LLM endpoint.
+    Optimized for high-volume logic extraction and JSON resilience.
     """
     def __init__(self):
         # Configuration from .env
@@ -21,129 +21,147 @@ class UnifiedOpenAIAgent:
         if not self.endpoint or not self.api_key:
             return
 
-        # Connection Pooling for high performance and streaming stability
+        # Connection Pooling for high performance and stability
         self.session = requests.Session()
-        # Most enterprise gateways use 'api-key'. For standard OpenAI, use 'Authorization': 'Bearer ...'
         self.session.headers.update({
             "api-key": self.api_key,
             "Content-Type": "application/json"
         })
 
+    def _safe_truncate(self, text: str, max_chars: int = 20000) -> str:
+        """
+        Prevents 400 Bad Request errors by ensuring the input code 
+        fits within the LLM's context window with room for the response.
+        """
+        if len(text) > max_chars:
+            return text[:max_chars] + "\n\n... [TRUNCATED FOR CONTEXT LIMITS] ..."
+        return text
+
     def _sanitize_json(self, text: str) -> dict:
         """
-        Aggressive JSON Repair Engine. 
-        Handles cut-off text, missing closing braces, and markdown noise.
+        Aggressive JSON Repair Engine.
+        Handles cut-off responses, markdown blocks, and unescaped newlines in long summaries.
         """
-        clean_text = text.strip()
-        
-        # 1. Strip Markdown code blocks if the LLM wrapped the JSON
-        if "```json" in clean_text:
-            clean_text = clean_text.split("```json")[1].split("```")[0].strip()
-        elif "```" in clean_text:
-            clean_text = clean_text.split("```")[1].split("```")[0].strip()
-
-        # 2. Extract strictly between first { and last }
-        start_idx = clean_text.find("{")
-        end_idx = clean_text.rfind("}")
-        if start_idx != -1 and end_idx != -1:
-            clean_text = clean_text[start_idx : end_idx + 1]
-
         try:
-            # 3. Direct Parse Attempt
+            # 1. Strip Markdown code blocks
+            clean_text = re.sub(r'```json\s*|\s*```', '', text, flags=re.DOTALL).strip()
+            
+            # 2. Extract strictly between first { and last }
+            start_idx = clean_text.find("{")
+            end_idx = clean_text.rfind("}")
+            if start_idx != -1 and end_idx != -1:
+                clean_text = clean_text[start_idx : end_idx + 1]
+
+            # 3. Fix common LLM string errors (unescaped newlines within JSON values)
+            # This is crucial for the 300+ word summaries
+            def replace_newlines(match):
+                return match.group(0).replace('\n', '\\n').replace('\r', '\\r')
+            
+            clean_text = re.sub(r'":\s*"[^"]*"', replace_newlines, clean_text)
+
+            # 4. Direct Parse Attempt
             return json.loads(clean_text)
+            
         except json.JSONDecodeError:
-            # 4. EMERGENCY REPAIR: Attempt to close dangling JSON (often happens with large summaries)
+            # 5. EMERGENCY REPAIR: Attempt to close dangling JSON if truncated by token limit
             try:
-                # Remove trailing commas
-                fixed = re.sub(r',\s*([\]}])', r'\1', clean_text)
-                # Count braces
-                open_b = fixed.count('{')
-                close_b = fixed.count('}')
-                open_sq = fixed.count('[')
-                close_sq = fixed.count(']')
-                
-                # Append missing closers
-                fixed += (']' * (open_sq - close_sq))
-                fixed += ('}' * (open_b - close_b))
-                
+                fixed = clean_text.rstrip().rstrip(',')
+                open_braces = fixed.count('{') - fixed.count('}')
+                open_brackets = fixed.count('[') - fixed.count(']')
+                fixed += (']' * open_brackets) + ('}' * open_braces)
                 return json.loads(fixed)
             except Exception:
-                # 5. Final Fallback: Structured Recovery Object
+                # 6. Final Fallback: Return raw text wrapped in a summary key so UI doesn't crash
                 return {
-                    "summary": "CRITICAL: The LLM response was too large and malformed. Raw response saved in Deep-Dive.",
+                    "summary": "CRITICAL: The AI response was too large to parse as JSON. Raw response is available in logic deep-dive.",
                     "description": text,
                     "functions": [],
                     "data_dictionary": [],
-                    "confidence_score": 0.4,
-                    "auto_approval_status": False
+                    "confidence_score": 0.5
                 }
 
     # --- PHASE 2: FORENSIC KNOWLEDGE EXTRACTION ---
 
     def generate_documentation(self, code: str) -> dict:
         """
-        Step 1: Deep-Dive Logic Extraction.
-        Demands an exhaustive 300+ word technical narrative with NO HTML.
+        Phase 1: Knowledge Extraction.
+        Demands a LONG narrative (400+ words) and granular logic mapping.
         """
+        # Truncate input to leave ~4k tokens for output summary
+        safe_code = self._safe_truncate(code)
+
         prompt = f"""
-        Act as a Principal Systems Architect. Perform an EXHAUSTIVE forensic analysis of this code.
-        You must explain every logical path, business rule, and data dependency.
+        Act as a Principal Systems Architect. Perform an EXHAUSTIVE forensic analysis of the provided code.
+        Your output must be a single, valid JSON object. 
+
+        REQUIRED JSON KEYS:
+        1. "summary": Provide a LONG (minimum 400 words), multi-paragraph technical narrative of the system. 
+           Detail the business domain, system goals, architecture, and overall processing strategy. 
+           DO NOT use HTML tags. Use plain text or Markdown only.
+        2. "description": A verbose technical deep-dive into logic, state transitions, and file I/O.
+        3. "functions": A list of every procedure/paragraph/subroutine found:
+           - "name": identifier.
+           - "purpose": Detailed functional goal.
+           - "logic_explanation": Step-by-step logic breakdown.
+           - "business_rules": Specific logical/financial rules enforced.
+        4. "data_dictionary": A list of every significant variable found:
+           - "variable": name.
+           - "role": Its business meaning and purpose.
+        5. "dependencies": List of external systems, databases, or libraries.
+        6. "complexity_rating": Integer (1-10).
+        7. "confidence_score": Float (0.0 to 1.0).
 
         SOURCE CODE:
         \"\"\"
-        {code}
+        {safe_code}
         \"\"\"
-
-        Return ONLY a JSON object with exactly these keys:
-        1. "summary": A LONG (300+ words), multi-paragraph technical summary of the system's goals and architecture. NO HTML.
-        2. "description": Detailed multi-paragraph breakdown of execution flow, logic, and side effects.
-        3. "functions": List of {{'name', 'purpose', 'logic_explanation', 'business_rules'}}.
-        4. "data_dictionary": List of {{'variable', 'role'}} mapping legacy fields to business meaning.
-        5. "dependencies": List of external files, DBs, or libraries.
-        6. "complexity_rating": Integer (1-10).
-        7. "confidence_score": Float (0.0 to 1.0).
-        8. "auto_approval_status": Boolean.
-
-        MANDATORY: Output ONLY JSON.
         """
 
         payload = {
             "messages": [
-                {"role": "system", "content": "You are a professional software analyst. You provide extremely long, technical, plain-text documentation in JSON format."},
+                {"role": "system", "content": "You are a professional technical analyst. You output ONLY strictly valid JSON. You write extremely long, technical, plain-text documentation."},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.1 # Low temperature for better JSON compliance
+            "temperature": 0.1,
+            "max_tokens": 4000 # Critical: Ensure LLM has space to write the long summary
         }
 
         try:
-            # Increase timeout for voluminous code analysis
             response = self.session.post(self.endpoint, json=payload, timeout=180)
-            response.raise_for_status()
-            content = response.json()['choices'][0]['message']['content']
+            
+            if response.status_code != 200:
+                return {
+                    "summary": f"Connection Error: {response.status_code}",
+                    "description": f"The LLM Gateway rejected the request. Details: {response.text}"
+                }
+            
+            res_data = response.json()
+            content = res_data['choices'][0]['message']['content']
             return self._sanitize_json(content)
+            
         except Exception as e:
             return {
-                "summary": f"Connection Error: {str(e)}",
-                "description": "The request to the LLM failed. Check your LLM_ENDPOINT and key."
+                "summary": "System Failure",
+                "description": f"An unexpected error occurred during API communication: {str(e)}"
             }
 
-    # --- PHASE 3: HIGH-FIDELITY SYNTHESIS ENGINE ---
+    # --- PHASE 3: UNSTOPPABLE FULL-FILE SYNTHESIS ---
 
-    def get_synthesis_prompt(self, doc_data: dict, target_stack: str) -> str:
+    def get_synthesis_prompt(self, doc_data: dict, target_lang: str) -> str:
         """
-        Step 2: Unified File Synthesis.
-        Enforces 100% logic parity and complete file structure.
+        Phase 2: Modernization.
+        Forces the synthesis of a COMPLETE, COMPILABLE file.
         """
         java_constraints = ""
-        if "Java" in target_stack:
+        if "Java" in target_lang:
             java_constraints = (
                 "- Target: Vanilla Java 17+.\n"
-                "- NO SPRING BOOT: Do not use @Service, @Component, or annotations.\n"
-                "- STANDARD JDK LIBRARIES: Use java.util, java.math.BigDecimal, java.time, etc.\n"
+                "- NO SPRING BOOT: No @Service, @Autowired, or annotations.\n"
+                "- STANDARD JDK ONLY: Use java.util, java.math.BigDecimal, java.time, etc.\n"
             )
 
         return f"""
-        TASK: GENERATE THE COMPLETE, RUNNABLE SOURCE CODE FOR A SINGLE {target_stack} FILE.
+        TASK: GENERATE THE COMPLETE, RUNNABLE SOURCE CODE FOR A SINGLE {target_lang} FILE.
         FAILURE IS NOT AN OPTION. DO NOT GENERATE SNIPPETS. 
 
         INPUT SPECIFICATION:
@@ -151,70 +169,58 @@ class UnifiedOpenAIAgent:
 
         STRICT ARCHITECTURAL REQUIREMENTS:
         1. COMPLETE FILE STRUCTURE: Include package declarations, all necessary imports, and the public class definition.
-        2. ENCAPSULATION & STATE: Map all legacy global variables (found in Data Dictionary) to PRIVATE CLASS MEMBER VARIABLES to maintain logical state.
-        3. 100% LOGIC PARITY: Implement every mathematical formula and conditional branch from the spec with zero omissions.
+        2. ENCAPSULATION & STATE: Map all legacy global variables to PRIVATE CLASS MEMBER VARIABLES.
+        3. 100% LOGIC PARITY: Implement every mathematical formula and conditional branch from the spec exactly.
         4. SINGLE FILE: The output must be a cohesive, standalone unit.
-        5. CLEAN CODE: Refactor procedural logic into clean methods; use meaningful variable names.
-        6. {java_constraints}
+        5. {java_constraints}
 
-        Return ONLY the source code. No conversational text.
+        Return ONLY the full source code content. No conversational text.
         """
 
     def stream_llm(self, prompt: str):
-        """Standardized SSE Parser for real-time streaming to Streamlit."""
+        """Standardized SSE Parser for real-time streaming."""
         payload = {
-            "messages": [
-                {"role": "system", "content": "You are a Senior Architect. You produce complete, accurate, runnable source files."},
-                {"role": "user", "content": prompt}
-            ],
+            "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.1,
-            "stream": True 
+            "stream": True,
+            "max_tokens": 4000
         }
-
         try:
             with self.session.post(self.endpoint, json=payload, stream=True, timeout=300) as resp:
                 resp.raise_for_status()
                 for line in resp.iter_lines():
-                    if not line:
-                        continue
-                    
-                    line_text = line.decode("utf-8").strip()
-                    if line_text.startswith("data: "):
-                        content_raw = line_text[6:]
-                        if content_raw == "[DONE]":
-                            break
-                        try:
-                            chunk_json = json.loads(content_raw)
-                            delta = chunk_json['choices'][0].get('delta', {}).get('content', '')
-                            if delta:
-                                yield delta
-                        except:
-                            continue
+                    if line:
+                        line_text = line.decode("utf-8").strip()
+                        if line_text.startswith("data: "):
+                            content_raw = line_text[6:]
+                            if content_raw == "[DONE]":
+                                break
+                            try:
+                                delta = json.loads(content_raw)['choices'][0].get('delta', {}).get('content', '')
+                                if delta:
+                                    yield delta
+                            except:
+                                continue
         except Exception as e:
-            yield f"\n[STREAM_ERROR: {str(e)}]"
+            yield f"\n[STREAMING_ERROR: {str(e)}]"
 
-    def get_test_prompt(self, modern_code: str, target_stack: str) -> str:
-        """Step 3: Full Test Suite Generation."""
-        framework = "JUnit 5" if "Java" in target_stack else "pytest"
+    def get_test_prompt(self, modern_code: str, target_lang: str) -> str:
+        """Phase 3: Testing."""
+        framework = "JUnit 5" if "Java" in target_lang else "pytest"
         return f"""
-        TASK: Generate a single comprehensive {framework} test file for the code below.
+        TASK: Generate a single comprehensive {framework} test file for the modernized code below.
+        Ensure 100% path coverage for the business rules.
         
         CODE:
         {modern_code}
-        
-        REQUIREMENTS:
-        - Ensure 100% path coverage.
-        - Mock dependencies where necessary.
-        - Return ONLY the test source code.
         """
 
     def calculate_dashboard_metrics(self, doc_data: dict) -> dict:
-        """Dashboard Heatmap logic."""
+        """Maps forensic results to dashboard zones."""
         conf = doc_data.get('confidence_score', 0.5)
-        # Zones do not block processing, they only flag risk
         if conf >= 0.85:
-            return {"zone": "GREEN (Ready)", "color": "green", "confidence_pct": f"{conf*100:.0f}%", "complexity": doc_data.get('complexity_rating', 5)}
+            return {"zone": "GREEN", "color": "green", "confidence_pct": f"{conf*100:.0f}%", "complexity": doc_data.get('complexity_rating', 5)}
         elif conf >= 0.60:
-            return {"zone": "AMBER (Review Recommended)", "color": "orange", "confidence_pct": f"{conf*100:.0f}%", "complexity": doc_data.get('complexity_rating', 7)}
+            return {"zone": "AMBER", "color": "orange", "confidence_pct": f"{conf*100:.0f}%", "complexity": doc_data.get('complexity_rating', 7)}
         else:
             return {"zone": "RED (High Risk)", "color": "red", "confidence_pct": f"{conf*100:.0f}%", "complexity": doc_data.get('complexity_rating', 9)}
