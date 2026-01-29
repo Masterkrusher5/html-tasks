@@ -1,178 +1,130 @@
 import os
-import json
 import re
-import requests
-from dotenv import load_dotenv
 
-# Load Environment Variables
-load_dotenv()
+class FileIngestor:
+    """
+    Phase 1: Legacy Code Ingestion & Structural Normalization.
+    Responsible for preparing voluminous legacy source files for 
+    Forensic Analysis by stripping noise and extracting architectural metadata.
+    """
 
-class UnifiedOpenAIAgent:
-    """
-    Universal Intelligence Engine.
-    Communicates via raw HTTP requests to any OpenAI-compatible LLM endpoint.
-    Supports high-detail forensic analysis and real-time streaming.
-    """
-    def __init__(self):
-        # Configuration from .env
-        self.endpoint = os.getenv("LLM_ENDPOINT")
-        self.api_key = os.getenv("LLM_KEY")
+    @staticmethod
+    def normalize(code: str) -> str:
+        """
+        Cleans legacy source code to maximize token efficiency and clarity.
+        1. Collapses redundant multiple spaces (essential for fixed-format COBOL/VB).
+        2. Standardizes indentation by stripping leading/trailing whitespace.
+        3. Removes empty lines to condense the logic flow.
+        """
+        if not code:
+            return ""
+
+        # 1. Collapse multiple spaces into a single space
+        code = re.sub(r' +', ' ', code)
+
+        # 2. Process line by line to strip noise and remove empty lines
+        lines = code.splitlines()
+        normalized_lines = []
         
-        if not self.endpoint or not self.api_key:
-            raise ValueError("LLM_ENDPOINT or LLM_KEY not found in environment variables.")
+        for line in lines:
+            clean_line = line.strip()
+            # Only keep lines with actual content to reduce token volume
+            if clean_line:
+                normalized_lines.append(clean_line)
 
-        # Connection Pooling for high performance
-        self.session = requests.Session()
-        # Most enterprise gateways use 'api-key'. 
-        # For standard OpenAI, change to: "Authorization": f"Bearer {self.api_key}"
-        self.session.headers.update({
-            "api-key": self.api_key,
-            "Content-Type": "application/json"
-        })
-        print(f"✅ Analyzer initialized using Endpoint: {self.endpoint}")
+        return "\n".join(normalized_lines)
 
-    def _sanitize_json(self, text: str) -> dict:
-        """Robust JSON parsing with markdown cleanup."""
+    @staticmethod
+    def read_uploaded_file(uploaded_file) -> str:
+        """
+        Safely reads content from a Streamlit file buffer.
+        Implements fallback decoding for legacy encodings (Latin-1/CP1252)
+        commonly found in Mainframe or older Windows environments.
+        """
         try:
-            # 1. Attempt direct parse
-            return json.loads(text)
-        except json.JSONDecodeError:
-            try:
-                # 2. Strip markdown code blocks (```json ... ```) if present
-                match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
-                if match:
-                    return json.loads(match.group(1))
-                
-                # 3. Fallback: Find the first { and last }
-                start = text.find("{")
-                end = text.rfind("}")
-                if start != -1 and end != -1:
-                    return json.loads(text[start:end+1])
-                
-                return {"summary": "Format Error", "description": "LLM did not return valid JSON."}
-            except Exception:
-                return {
-                    "summary": "Parsing Error",
-                    "description": "Critical failure in logic extraction.",
-                    "functions": [],
-                    "data_dictionary": [],
-                    "confidence_score": 0.0
-                }
+            # Try standard UTF-8 first
+            return uploaded_file.read().decode("utf-8")
+        except UnicodeDecodeError:
+            # Fallback for legacy character sets (VB6/COBOL exports)
+            uploaded_file.seek(0)
+            return uploaded_file.read().decode("latin-1", errors="ignore")
 
-    # --- PHASE 2: FORENSIC KNOWLEDGE EXTRACTION ---
-
-    def generate_documentation(self, code: str) -> dict:
+    @staticmethod
+    def analyze_file_role(code: str, file_name: str) -> str:
         """
-        Generates a granular, high-detail technical specification via HTTP POST.
+        Heuristic detection to determine if the file is a Main Entry Program
+        or a Shared Component/Library. This helps the Analyzer set the 
+        correct forensic context.
         """
-        prompt = f"""
-        Act as a Principal Systems Architect and Forensic Software Engineer. 
-        Perform an exhaustive technical analysis of the following legacy source code.
+        code_upper = code.upper()
+        ext = os.path.splitext(file_name)[1].lower()
 
-        SOURCE CODE:
-        \"\"\"
-        {code}
-        \"\"\"
+        # COBOL Heuristics
+        if ext in ['.cbl', '.cob']:
+            if "PROCEDURE DIVISION" in code_upper and "STOP RUN" in code_upper:
+                return "Entry Program (Main)"
+            return "Shared Library (Copybook/Subroutine)"
 
-        Provide a structured JSON output with the following EXACT keys:
-        summary, description, functions (list of {{name, purpose, logic_explanation, inputs_outputs, business_rules}}), 
-        data_dictionary (list of {{variable, type, role}}), dependencies, complexity_rating, 
-        confidence_score, auto_approval_status.
+        # VB6 Heuristics
+        if ext in ['.bas', '.frm', '.cls', '.vb']:
+            if "SUB MAIN()" in code_upper or "PRIVATE SUB FORM_LOAD" in code_upper:
+                return "Entry Program (Startup/UI)"
+            return "Shared Library (Module/Class)"
 
-        Ensure 'description' and 'logic_explanation' are extremely verbose and technical.
-        Return ONLY the JSON object.
+        # Java Heuristics
+        if ext == '.java':
+            if "PUBLIC STATIC VOID MAIN" in code_upper:
+                return "Entry Program (Main)"
+            return "Shared Library (Utility/Model)"
+
+        return "Source Component"
+
+    @staticmethod
+    def extract_metadata(uploaded_file, code: str) -> dict:
         """
-
-        payload = {
-            "messages": [
-                {"role": "system", "content": "You are a forensic systems architect. Output strictly valid JSON."},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0
-            # Optional: "response_format": {"type": "json_object"} 
-            # (only if your endpoint supports it)
+        Extracts comprehensive metadata for the Ingestion Dashboard.
+        Maps extensions to primary legacy technologies.
+        """
+        file_name = uploaded_file.name
+        extension = os.path.splitext(file_name)[1].lower()
+        
+        lang_map = {
+            '.cbl': 'COBOL',
+            '.cob': 'COBOL',
+            '.vb': 'Visual Basic 6',
+            '.bas': 'VB Module',
+            '.frm': 'VB Form',
+            '.java': 'Legacy Java',
+            '.txt': 'Generic Source'
+        }
+        
+        return {
+            "file_name": file_name,
+            "extension": extension,
+            "detected_language": lang_map.get(extension, "Unknown Tech"),
+            "size_kb": round(uploaded_file.size / 1024, 2),
+            "line_count": len(code.splitlines()),
+            "role": FileIngestor.analyze_file_role(code, file_name)
         }
 
-        try:
-            response = self.session.post(self.endpoint, json=payload, timeout=90)
-            response.raise_for_status()
-            res_data = response.json()
-            content = res_data['choices'][0]['message']['content']
-            return self._sanitize_json(content)
-        except Exception as e:
-            return {
-                "summary": "Connection Error",
-                "description": f"Failed to reach LLM Endpoint: {str(e)}",
-                "functions": [],
-                "confidence_score": 0.0
-            }
-
-    # --- PHASE 3 & 4: STREAMING ENGINE (SSE Parser) ---
-
-    def stream_llm(self, prompt: str):
+    @staticmethod
+    def build_call_graph_hints(code: str) -> list:
         """
-        Generic Server-Sent Events (SSE) parser for streaming responses.
-        Yields tokens in real-time for the UI.
+        Forensic Scan: Identifies external dependencies, file associations, 
+        and cross-program calls to help build the documentation's 'Dependencies' section.
         """
-        payload = {
-            "messages": [
-                {"role": "system", "content": "You are a Senior Architect. Provide only code."},
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": 0,
-            "stream": True
-        }
-
-        try:
-            with self.session.post(self.endpoint, json=payload, stream=True, timeout=120) as response:
-                response.raise_for_status()
-                for line in response.iter_lines():
-                    if not line:
-                        continue
-                    
-                    line_text = line.decode("utf-8").strip()
-                    if line_text.startswith("data: "):
-                        data_payload = line_text[6:] # Strip the 'data: ' prefix
-                        
-                        if data_payload == "[DONE]":
-                            break
-                        
-                        try:
-                            chunk_json = json.loads(data_payload)
-                            delta = chunk_json['choices'][0].get('delta', {})
-                            if 'content' in delta:
-                                yield delta['content']
-                        except:
-                            continue
-        except Exception as e:
-            yield f"\n[STREAMING_ERROR: {str(e)}]"
-
-    def get_synthesis_prompt(self, doc_data: dict, target_lang: str) -> str:
-        constraints = ""
-        if "Java" in target_lang:
-            constraints = (
-                "Use Vanilla Java 17+ (JDK standard libraries only). "
-                "DO NOT use Spring Boot, Spring Annotations, or third-party frameworks."
-            )
-        else:
-            constraints = f"Use standard {target_lang} best practices."
-
-        return f"""
-        TASK: Synthesize a cohesive {target_lang} file from this forensic spec:
-        {json.dumps(doc_data)}
+        patterns = [
+            r'(?i)CALL\s+[\'\"](\w+)[\'\"]',    # COBOL CALLs
+            r'(?i)COPY\s+(\w+)',                # COBOL COPYBOOKs
+            r'(?i)SELECT\s+(\w+)\s+ASSIGN',     # COBOL File Selection
+            r'(?i)Declare\s+Sub\s+(\w+)',       # VB API Declarations
+            r'(?i)import\s+([\w\.]+)',          # Java Imports
+            r'(?i)CreateObject\([\'\"]([\w\.]+)[\'\"]\)' # VB COM/ActiveX Objects
+        ]
         
-        CONSTRAINTS:
-        - {constraints}
-        - Maintain exact business formulas and logical branching.
-        - Return ONLY the full source code content.
-        """
-
-    def get_test_prompt(self, modern_code: str, target_lang: str) -> str:
-        framework = "JUnit 5" if "Java" in target_lang else "pytest"
-        return f"Generate a {framework} test file for this code:\n{modern_code}\nReturn ONLY code."
-
-    def calculate_dashboard_metrics(self, doc_data: dict) -> dict:
-        conf = doc_data.get('confidence_score', 0)
-        auto = doc_data.get('auto_approval_status', False)
-        zone, color = ("GREEN", "green") if (auto and conf >= 0.85) else (("AMBER", "orange") if conf >= 0.6 else ("RED", "red"))
-        return {"zone": zone, "color": color, "confidence_pct": f"{conf*100:.0f}%", "complexity": doc_data.get('complexity_rating', 'N/A')}
+        found_hints = []
+        for pattern in patterns:
+            matches = re.findall(pattern, code)
+            found_hints.extend(matches)
+            
+        return list(set(found_hints))
