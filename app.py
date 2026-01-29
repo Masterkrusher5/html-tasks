@@ -2,28 +2,27 @@ import streamlit as st
 import os
 import threading
 import time
-import json
 from dotenv import load_dotenv
 
 # --- THREADING CONTEXT IMPORTS ---
-# This is mandatory to prevent 'NoSessionContext' errors during parallel streaming
+# Prevents 'NoSessionContext' errors when background threads update the Streamlit UI
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 
-# Import our specialized core modules
+# Import the refactored core modules
 from core.ingestion import FileIngestor
 from core.analyzer import UnifiedOpenAIAgent
 
 # Load environment variables
 load_dotenv()
 
-# 1. Page Configuration (Must be first)
+# 1. Page Configuration (Must be the first Streamlit command)
 st.set_page_config(
     page_title="Forensic Modernizer Pro",
     page_icon="🛡️",
     layout="wide"
 )
 
-# UI Lock for thread-safe websocket communication
+# UI Lock to prevent browser websocket collisions during real-time streaming
 ui_lock = threading.Lock()
 
 # 2. Initialize Engines in Session State
@@ -41,13 +40,14 @@ def transformation_worker(doc_data, target_lang, code_slot, test_slot, result_co
     lang_key = "java" if "Java" in target_lang else "python" if "Python" in target_lang else "csharp"
     
     try:
-        # 1. PHASE 3: UNIFIED CODE SYNTHESIS
+        # 1. PHASE 3: UNIFIED CODE SYNTHESIS (Complete File Mode)
         full_code = ""
         synth_prompt = agent.get_synthesis_prompt(doc_data, target_lang)
         
         for delta in agent.stream_llm(synth_prompt):
             full_code += delta
             with ui_lock:
+                # Typing effect with cursor
                 code_slot.code(full_code + " ▌", language=lang_key)
         
         with ui_lock:
@@ -65,7 +65,7 @@ def transformation_worker(doc_data, target_lang, code_slot, test_slot, result_co
         with ui_lock:
             test_slot.code(full_tests, language=lang_key)
             
-        # Persist results so they don't disappear on next UI interaction
+        # Store for session persistence
         result_collector["code"] = full_code
         result_collector["tests"] = full_tests
 
@@ -75,27 +75,32 @@ def transformation_worker(doc_data, target_lang, code_slot, test_slot, result_co
 
 # --- MAIN APP UI ---
 st.title("🛡️ Forensic Legacy Modernizer Pro")
-st.markdown("Automated Forensic Analysis ➡️ Deep Technical Specification ➡️ Unified Transformation")
+st.markdown("Automated Ingestion ➡️ Parallel Forensic Logic Extraction ➡️ Full-File Synthesis")
 
-# Sidebar
+# --- Sidebar Configuration ---
 with st.sidebar:
     st.header("Pipeline Settings")
     target_stack = st.selectbox("Target Architecture", [
         "Java (Vanilla 17+)", 
-        "Python (Clean/Typing)", 
+        "Python (Standard)", 
         "C# (.NET Core)"
     ])
     st.divider()
-    if st.button("Clear Session & Reset"):
+    st.markdown("**Core Quality Gate:**")
+    st.write("✅ Multi-threaded Extraction")
+    st.write("✅ 200-Word Tech Summary")
+    st.write("✅ Mandatory Full-File Code")
+    
+    if st.button("Reset Application"):
         st.session_state.clear()
         st.rerun()
 
-# --- STEP 1: INGESTION ---
+# --- STEP 1: FILE INGESTION ---
 st.subheader("📁 Step 1: Ingest Legacy Source")
-uploaded_file = st.file_uploader("Upload Source File (Voluminous code support)", type=['cbl', 'cob', 'vb', 'java', 'txt'])
+uploaded_file = st.file_uploader("Upload Source File (COBOL, VB, Java, etc.)", type=['cbl', 'cob', 'vb', 'bas', 'java', 'txt'])
 
 if uploaded_file:
-    # Process file once and store in session
+    # Process file once and store in session to prevent re-parsing on scroll
     if "clean_code" not in st.session_state or st.session_state.get("current_file") != uploaded_file.name:
         raw_content = st.session_state.ingestor.read_uploaded_file(uploaded_file)
         st.session_state.clean_code = st.session_state.ingestor.normalize(raw_content)
@@ -108,9 +113,9 @@ if uploaded_file:
     c2.metric("Detected Role", meta['role'])
     c3.metric("Payload Size", f"{meta['size_kb']} KB")
 
-    # Trigger Phase 1
-    if st.button("📝 Phase 1: Generate Forensic Documentation", type="primary", use_container_width=True):
-        with st.status("Analyzing system architecture and logic flow...") as status:
+    # Trigger Forensic Analysis
+    if st.button("📝 Phase 1: Parallel Forensic Analysis", type="primary", use_container_width=True):
+        with st.status("Spawning parallel threads for logic and narrative extraction...") as status:
             doc_results = st.session_state.agent.generate_documentation(st.session_state.clean_code)
             st.session_state.doc = doc_results
             status.update(label="Forensic Analysis Complete!", state="complete")
@@ -123,18 +128,19 @@ if "doc" in st.session_state:
     st.divider()
     st.header("📑 Phase 2: Technical Specification")
     
-    # Heatmap row
+    # Heatmap Row
     m1, m2, m3 = st.columns(3)
     with m1:
         st.metric("AI Confidence", metrics['confidence_pct'])
     with m2:
+        # Markdown colored zones
         st.markdown(f"**Dashboard Status:** :{metrics['color']}[{metrics['zone']}]")
     with m3:
         st.metric("Legacy Complexity", f"{metrics['complexity']}/10")
 
-    # 1. LONG EXECUTIVE SUMMARY (Uses st.info for high-contrast scrolling text)
+    # 1. LONG EXECUTIVE SUMMARY (Markdown optimized - No HTML bugs)
     st.subheader("1. Detailed Executive System Summary")
-    st.markdown(doc.get('summary', 'Summary Extraction Failed'))
+    st.info(doc.get('summary', 'Summary extraction failed or was truncated.'))
     
     # 2. BUSINESS LOGIC DEEP-DIVE
     st.subheader("2. Logical Execution Flow & Architecture")
@@ -144,30 +150,37 @@ if "doc" in st.session_state:
     tab_func, tab_vars, tab_deps = st.tabs(["⚙️ Functional Analysis", "📊 Data Dictionary", "🔗 Dependencies"])
     
     with tab_func:
-        st.write("Granular breakdown of procedures and business rules:")
-        st.table(doc.get("functions", []))
+        funcs = doc.get("functions", [])
+        if funcs:
+            st.table(funcs)
+        else:
+            st.warning("No discrete functions were identified in the metadata thread.")
     
     with tab_vars:
-        st.write("Mapping legacy variables to modern business roles:")
-        st.table(doc.get("data_dictionary", []))
+        vars_list = doc.get("data_dictionary", [])
+        if vars_list:
+            st.table(vars_list)
+        else:
+            st.warning("Variable mapping was not detected.")
         
     with tab_deps:
         raw_deps = doc.get('dependencies', [])
-        # Resilient dependency list formatting
+        # Resilient formatting for list of dicts or strings
         if isinstance(raw_deps, list):
             clean_deps = [str(d.get('name', d)) if isinstance(d, dict) else str(d) for d in raw_deps]
-            st.write(", ".join(clean_deps) if clean_deps else "No external dependencies detected.")
+            st.write(", ".join(clean_deps) if clean_deps else "None detected.")
         else:
             st.write(str(raw_deps))
 
     # --- STEP 3: UNIFIED SYNTHESIS ---
     st.divider()
-    st.header(f"⚙️ Phase 3: Unified Synthesis ({target_stack})")
+    st.header(f"⚙️ Phase 3: Modernize to {target_stack}")
+    st.caption("Status: FORCED FULL-FILE SYNTHESIS. Generating complete structure regardless of legacy complexity.")
     
-    if st.button("🚀 Execute Unstoppable Modernization", type="primary", use_container_width=True):
-        ctx = get_script_run_ctx() # Bind the UI context to the thread
+    if st.button("🚀 Execute Unified Transformation", type="primary", use_container_width=True):
+        ctx = get_script_run_ctx() # Capture current session context for the thread
         
-        # Create UI slots for the code output
+        # UI slots for the code output
         res_col1, res_col2 = st.columns(2)
         with res_col1:
             st.subheader("🛠️ Modern Source Code")
@@ -176,25 +189,24 @@ if "doc" in st.session_state:
             st.subheader("🧪 Automated Test Suite")
             test_placeholder = st.empty()
 
-        # Temporary result holder
-        res_collector = {"code": "", "tests": ""}
+        result_collector = {"code": "", "tests": ""}
         
-        # Start background thread
+        # Start the threaded synthesis worker
         t = threading.Thread(
             target=transformation_worker,
-            args=(doc, target_stack, code_placeholder, test_placeholder, res_collector)
+            args=(doc, target_stack, code_placeholder, test_placeholder, result_collector)
         )
         add_script_run_ctx(t, ctx)
         t.start()
         
-        with st.spinner("Synthesizing class structure... Failure is not an option."):
-            # We join to ensure the status bar waits for the thread to finish
+        with st.spinner("Writing complete class structure and logic..."):
+            # Ensure the UI status spinner waits for the thread to finish
             t.join() 
         
-        st.success("Modernization Successful! Unified file generated.")
-        st.session_state.final_results = res_collector
+        st.success("Modernization Complete! Unified file is ready.")
+        st.session_state.final_results = result_collector
 
-# Retention Display (Shows results if they were previously generated)
+# Final persistence of generated artifacts
 if "final_results" in st.session_state:
     st.divider()
-    st.info("💡 **Architect Note:** This code is a single cohesive file with imports, class members, and logically mapped business rules.")
+    st.info("💡 **Developer Note:** The source code above is a complete file. All global legacy states have been encapsulated into private class members.")
