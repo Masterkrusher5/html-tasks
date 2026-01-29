@@ -10,9 +10,8 @@ load_dotenv()
 
 class UnifiedOpenAIAgent:
     """
-    Parallel Forensic Intelligence Engine.
-    Uses multi-threading to extract logic and narrative concurrently,
-    preventing 400 Bad Request errors by splitting large payloads.
+    Forensic Modernization Engine (High-Fidelity Version).
+    Handles parallel logic extraction and high-density code synthesis.
     """
     def __init__(self):
         # Configuration from .env
@@ -22,56 +21,67 @@ class UnifiedOpenAIAgent:
         if not self.endpoint or not self.api_key:
             return
 
-        # Connection Pooling for high performance and streaming stability
+        # Connection Pooling for high performance
         self.session = requests.Session()
-        # Most enterprise gateways use 'api-key'. For standard OpenAI, use 'Authorization': 'Bearer ...'
+        # Standard header setup for Azure/Enterprise Gateways
         self.session.headers.update({
             "api-key": self.api_key,
             "Content-Type": "application/json"
         })
 
     def _safe_truncate(self, text: str, max_chars: int = 15000) -> str:
-        """Prevents context overflow errors."""
-        return text[:max_chars] + "\n...[CODE TRUNCATED FOR PROCESSING]..." if len(text) > max_chars else text
+        """Ensures input payload doesn't exceed gateway limits."""
+        return text[:max_chars] + "\n...[CODE TRUNCATED]..." if len(text) > max_chars else text
 
     def _extract_json_block(self, text: str) -> any:
-        """Surgically extracts JSON from a string, handling markdown wrappers."""
+        """Surgically extracts JSON from a string, repairing common LLM errors."""
         try:
+            # 1. Look for content inside markdown code blocks
             match = re.search(r'(\[.*\]|\{.*\})', text, re.DOTALL)
             if match:
                 clean_json = match.group(1)
-                # Basic fix for common LLM unescaped newline errors
+                # Escape literal newlines within JSON values
                 clean_json = clean_json.replace('\n', '\\n').replace('\r', '\\r')
-                # Restore structural newlines for braces
+                # Restore structural newlines for braces/brackets
                 clean_json = clean_json.replace('}\\n{', '}\n{').replace(']\\n[', ']\n[')
-                return json.loads(match.group(1))
+                return json.loads(clean_json)
             return []
         except:
             return []
 
-    # --- PARALLEL SUB-TASKS ---
+    # --- PARALLEL FORENSIC TASKS ---
 
     def _call_narrative_task(self, code: str) -> dict:
-        """THREAD 1: Focused on long-form technical documentation."""
+        """THREAD A: High-detail technical technical report generation."""
         prompt = f"""
-        Act as a Principal Systems Analyst. Provide two things for the code below:
-        1. A Technical SUMMARY (150-200 words). Explain goals and context.
-        2. A verbose multi-paragraph DESCRIPTION of the logical execution flow.
+        Act as a Principal Software Architect. Provide an exhaustive Technical Specification for the code below.
         
-        NO HTML. USE PLAIN TEXT.
+        REQUIREMENTS (300-400 words total):
+        1. BUSINESS GOAL: Explain exactly what this system achieves.
+        2. ARCHITECTURE: Describe legacy design patterns, data flow, and processing strategy.
+        3. STATE MANAGEMENT: Detail how variables and files maintain system state.
+        4. COMPLEXITY ANALYSIS: Identify the most critical and high-risk logic branches.
+
+        CONSTRAINTS: No HTML. Plain Text or Markdown only. Be extremely verbose and technical.
+        
         CODE:
         {code}
         """
-        payload = {"messages": [{"role": "user", "content": prompt}], "temperature": 0.1, "max_tokens": 1500}
+        payload = {
+            "messages": [{"role": "system", "content": "You are a professional architect. You write 400-word deep-dives."}, 
+                         {"role": "user", "content": prompt}],
+            "temperature": 0.2, 
+            "max_tokens": 2000
+        }
         try:
             res = self.session.post(self.endpoint, json=payload, timeout=90).json()
             content = res['choices'][0]['message']['content']
-            return {"summary": content[:1500], "description": content} # Basic split
+            return {"summary": content, "description": content}
         except:
             return {"summary": "Narrative extraction failed.", "description": ""}
 
     def _call_metadata_task(self, code: str) -> dict:
-        """THREAD 2: Focused on structured technical mapping (JSON)."""
+        """THREAD B: Structural mapping extraction (JSON)."""
         prompt = f"""
         Analyze the legacy code and return ONLY a JSON object.
         Keys: 
@@ -83,7 +93,12 @@ class UnifiedOpenAIAgent:
         CODE:
         {code}
         """
-        payload = {"messages": [{"role": "user", "content": prompt}], "temperature": 0}
+        payload = {
+            "messages": [{"role": "system", "content": "You are a compiler analyst. Output ONLY JSON."}, 
+                         {"role": "user", "content": prompt}],
+            "temperature": 0,
+            "max_tokens": 2500
+        }
         try:
             res = self.session.post(self.endpoint, json=payload, timeout=90).json()
             content = res['choices'][0]['message']['content']
@@ -92,17 +107,12 @@ class UnifiedOpenAIAgent:
         except:
             return {"functions": [], "data_dictionary": []}
 
-    # --- PHASE 2: PARALLEL KNOWLEDGE EXTRACTION ---
+    # --- PHASE 2: ORCHESTRATION ---
 
     def generate_documentation(self, code: str) -> dict:
-        """
-        Phase 1: Multi-threaded Forensic Analysis.
-        Executes Narrative and Metadata calls in parallel to maximize speed 
-        and minimize payload size per request.
-        """
+        """Runs Forensic Analysis in parallel threads to prevent 400 errors and speed up processing."""
         safe_code = self._safe_truncate(code)
         
-        # Execute both tasks concurrently
         with ThreadPoolExecutor(max_workers=2) as executor:
             future_n = executor.submit(self._call_narrative_task, safe_code)
             future_m = executor.submit(self._call_metadata_task, safe_code)
@@ -110,7 +120,6 @@ class UnifiedOpenAIAgent:
             narrative = future_n.result()
             metadata = future_m.result()
 
-        # Merge results into a unified forensic spec
         return {
             "summary": narrative.get("summary"),
             "description": narrative.get("description"),
@@ -121,51 +130,55 @@ class UnifiedOpenAIAgent:
             "confidence_score": metadata.get("metrics", {}).get("confidence", 0.8)
         }
 
-    # --- PHASE 3: SURGICAL SYNTHESIS ---
+    # --- PHASE 3: HIGH-DENSITY SYNTHESIS ---
 
     def get_synthesis_prompt(self, doc_data: dict, target_stack: str) -> str:
         """
-        Generates a surgical prompt for complete file synthesis.
-        Removes redundant fields to keep the request size below gateway limits.
+        Builds a surgical synthesis prompt. 
+        Excludes the long narrative to maximize the output token budget for code.
         """
-        # We use a compact spec for the synthesis prompt to avoid 400 errors
+        # Compact spec focusing on logic nodes and variable mapping
         compact_spec = {
-            "summary": doc_data.get("summary"),
             "business_logic_units": doc_data.get("functions"),
-            "variables": doc_data.get("data_dictionary")
+            "state_variables": doc_data.get("data_dictionary")
         }
         
         java_rules = ""
         if "Java" in target_stack:
-            java_rules = "- Target: Vanilla Java 17+.\n- NO SPRING BOOT/Annotations.\n- Standard JDK libraries only."
+            java_rules = (
+                "- Target: Vanilla Java 17+.\n"
+                "- NO SPRING BOOT: Do not use any annotations or frameworks.\n"
+                "- Standard JDK libraries only (java.math.BigDecimal for precision).\n"
+            )
 
         return f"""
         TASK: GENERATE THE COMPLETE, RUNNABLE SOURCE CODE FOR A SINGLE {target_stack} FILE.
-        FAILURE IS NOT AN OPTION. PROVIDE FULL FILE STRUCTURE.
+        FAILURE IS NOT AN OPTION. YOU MUST PROVIDE THE FULL FILE STRUCTURE.
 
         LOGIC SPECIFICATION:
         {json.dumps(compact_spec)}
 
-        REQUIREMENTS:
-        1. STRUCTURE: Full file with imports, package, and class definition.
-        2. ENCAPSULATION: Map legacy 'variables' to private class fields.
-        3. LOGIC PARITY: Implement logic for all 'business_logic_units' exactly.
-        4. SINGLE FILE: No snippets. Cohesive standalone unit.
-        5. {java_rules}
+        STRICT ARCHITECTURAL REQUIREMENTS:
+        1. FULL FILE: Include all imports, package headers, and the public class definition.
+        2. ENCAPSULATION: Map 'state_variables' to PRIVATE CLASS MEMBER VARIABLES.
+        3. LOGIC PARITY: Replicate mathematical formulas and logical branches for all 'business_logic_units'.
+        4. LOGIC DENSITY: Skip verbose comments inside methods to prevent output truncation.
+        5. SINGLE FILE: No snippets. Cohesive standalone code only.
+        6. {java_rules}
 
-        Return ONLY the source code.
+        Return ONLY the full source code content.
         """
 
     def stream_llm(self, prompt: str):
-        """Standardized SSE Parser for real-time streaming."""
+        """SSE Parser optimized for long-duration code synthesis."""
         payload = {
             "messages": [
-                {"role": "system", "content": "You are a Senior Architect. Output ONLY valid, complete source code."},
+                {"role": "system", "content": "You are a Senior Software Architect. Output ONLY valid, complete source code."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.1,
             "stream": True,
-            "max_tokens": 4000
+            "max_tokens": 4000 # Absolute high limit for full-file completion
         }
 
         try:
@@ -191,14 +204,28 @@ class UnifiedOpenAIAgent:
     # --- PHASE 4: VALIDATION ---
 
     def get_test_prompt(self, modern_code: str, target_stack: str) -> str:
+        """Generates comprehensive tests with 100% path coverage."""
         framework = "JUnit 5" if "Java" in target_stack else "pytest"
-        return f"Generate a FULL comprehensive {framework} test suite for this code:\n{modern_code}"
+        return f"""
+        TASK: Generate a single comprehensive {framework} test suite for the code provided.
+        Ensure every business logic path and edge case is covered.
+        
+        CODE:
+        {modern_code}
+        """
 
     def calculate_dashboard_metrics(self, doc_data: dict) -> dict:
+        """Dashboard logic for risk heatmap."""
         conf = float(doc_data.get('confidence_score', 0.8))
-        color = "green" if conf >= 0.8 else "orange" if conf >= 0.6 else "red"
+        if conf >= 0.85:
+            color, zone = "green", "GREEN (Ready)"
+        elif conf >= 0.60:
+            color, zone = "orange", "AMBER (Review)"
+        else:
+            color, zone = "red", "RED (High Risk)"
+            
         return {
-            "zone": "GREEN" if conf >= 0.8 else "AMBER" if conf >= 0.6 else "RED (High Risk)",
+            "zone": zone,
             "color": color,
             "confidence_pct": f"{conf*100:.0f}%",
             "complexity": doc_data.get('complexity_rating', 5)
