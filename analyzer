@@ -10,8 +10,9 @@ load_dotenv()
 
 class UnifiedOpenAIAgent:
     """
-    Forensic Modernization Engine (High-Fidelity Version).
-    Handles parallel logic extraction and high-density code synthesis.
+    High-Performance Multi-Threaded Forensic Engine.
+    Uses 'Segmented Synthesis' to bypass LLM output token limits and 
+    prevent mid-file truncation.
     """
     def __init__(self):
         # Configuration from .env
@@ -23,56 +24,45 @@ class UnifiedOpenAIAgent:
 
         # Connection Pooling for high performance
         self.session = requests.Session()
-        # Standard header setup for Azure/Enterprise Gateways
+        # Most enterprise gateways use 'api-key'. For standard OpenAI, use 'Authorization': 'Bearer ...'
         self.session.headers.update({
             "api-key": self.api_key,
             "Content-Type": "application/json"
         })
 
-    def _safe_truncate(self, text: str, max_chars: int = 15000) -> str:
-        """Ensures input payload doesn't exceed gateway limits."""
+    def _safe_truncate(self, text: str, max_chars: int = 12000) -> str:
+        """Prevents context overflow (400 Bad Request)."""
         return text[:max_chars] + "\n...[CODE TRUNCATED]..." if len(text) > max_chars else text
 
     def _extract_json_block(self, text: str) -> any:
-        """Surgically extracts JSON from a string, repairing common LLM errors."""
+        """Surgically extracts JSON from LLM response."""
         try:
-            # 1. Look for content inside markdown code blocks
             match = re.search(r'(\[.*\]|\{.*\})', text, re.DOTALL)
             if match:
-                clean_json = match.group(1)
-                # Escape literal newlines within JSON values
-                clean_json = clean_json.replace('\n', '\\n').replace('\r', '\\r')
-                # Restore structural newlines for braces/brackets
+                clean_json = match.group(1).replace('\n', '\\n').replace('\r', '\\r')
                 clean_json = clean_json.replace('}\\n{', '}\n{').replace(']\\n[', ']\n[')
                 return json.loads(clean_json)
             return []
         except:
             return []
 
-    # --- PARALLEL FORENSIC TASKS ---
+    # --- PHASE 1: PARALLEL FORENSIC ANALYSIS ---
 
     def _call_narrative_task(self, code: str) -> dict:
-        """THREAD A: High-detail technical technical report generation."""
+        """THREAD 1: Focused on technical summary and deep-dive."""
         prompt = f"""
-        Act as a Principal Software Architect. Provide an exhaustive Technical Specification for the code below.
+        Act as a Principal Systems Architect. Provide an exhaustive Technical Specification for the code below.
         
         REQUIREMENTS (300-400 words total):
         1. BUSINESS GOAL: Explain exactly what this system achieves.
         2. ARCHITECTURE: Describe legacy design patterns, data flow, and processing strategy.
         3. STATE MANAGEMENT: Detail how variables and files maintain system state.
-        4. COMPLEXITY ANALYSIS: Identify the most critical and high-risk logic branches.
-
-        CONSTRAINTS: No HTML. Plain Text or Markdown only. Be extremely verbose and technical.
         
+        NO HTML. USE PLAIN TEXT.
         CODE:
         {code}
         """
-        payload = {
-            "messages": [{"role": "system", "content": "You are a professional architect. You write 400-word deep-dives."}, 
-                         {"role": "user", "content": prompt}],
-            "temperature": 0.2, 
-            "max_tokens": 2000
-        }
+        payload = {"messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 1500}
         try:
             res = self.session.post(self.endpoint, json=payload, timeout=90).json()
             content = res['choices'][0]['message']['content']
@@ -81,7 +71,7 @@ class UnifiedOpenAIAgent:
             return {"summary": "Narrative extraction failed.", "description": ""}
 
     def _call_metadata_task(self, code: str) -> dict:
-        """THREAD B: Structural mapping extraction (JSON)."""
+        """THREAD 2: Focused on structured technical mapping (JSON)."""
         prompt = f"""
         Analyze the legacy code and return ONLY a JSON object.
         Keys: 
@@ -93,12 +83,7 @@ class UnifiedOpenAIAgent:
         CODE:
         {code}
         """
-        payload = {
-            "messages": [{"role": "system", "content": "You are a compiler analyst. Output ONLY JSON."}, 
-                         {"role": "user", "content": prompt}],
-            "temperature": 0,
-            "max_tokens": 2500
-        }
+        payload = {"messages": [{"role": "user", "content": prompt}], "temperature": 0, "max_tokens": 2000}
         try:
             res = self.session.post(self.endpoint, json=payload, timeout=90).json()
             content = res['choices'][0]['message']['content']
@@ -107,18 +92,13 @@ class UnifiedOpenAIAgent:
         except:
             return {"functions": [], "data_dictionary": []}
 
-    # --- PHASE 2: ORCHESTRATION ---
-
     def generate_documentation(self, code: str) -> dict:
-        """Runs Forensic Analysis in parallel threads to prevent 400 errors and speed up processing."""
+        """Orchestrates parallel analysis."""
         safe_code = self._safe_truncate(code)
-        
         with ThreadPoolExecutor(max_workers=2) as executor:
-            future_n = executor.submit(self._call_narrative_task, safe_code)
-            future_m = executor.submit(self._call_metadata_task, safe_code)
-            
-            narrative = future_n.result()
-            metadata = future_m.result()
+            f_n = executor.submit(self._call_narrative_task, safe_code)
+            f_m = executor.submit(self._call_metadata_task, safe_code)
+            narrative, metadata = f_n.result(), f_m.result()
 
         return {
             "summary": narrative.get("summary"),
@@ -130,57 +110,49 @@ class UnifiedOpenAIAgent:
             "confidence_score": metadata.get("metrics", {}).get("confidence", 0.8)
         }
 
-    # --- PHASE 3: HIGH-DENSITY SYNTHESIS ---
+    # --- PHASE 2: SEGMENTED PARALLEL SYNTHESIS ---
 
-    def get_synthesis_prompt(self, doc_data: dict, target_stack: str) -> str:
-        """
-        Builds a surgical synthesis prompt. 
-        Excludes the long narrative to maximize the output token budget for code.
-        """
-        # Compact spec focusing on logic nodes and variable mapping
-        compact_spec = {
-            "business_logic_units": doc_data.get("functions"),
-            "state_variables": doc_data.get("data_dictionary")
-        }
-        
-        java_rules = ""
-        if "Java" in target_stack:
-            java_rules = (
-                "- Target: Vanilla Java 17+.\n"
-                "- NO SPRING BOOT: Do not use any annotations or frameworks.\n"
-                "- Standard JDK libraries only (java.math.BigDecimal for precision).\n"
-            )
-
+    def get_skeleton_prompt(self, doc_data: dict, target_stack: str) -> str:
+        """Builds the file header, imports, and member variables."""
+        vars_json = json.dumps(doc_data.get('data_dictionary', []))
         return f"""
-        TASK: GENERATE THE COMPLETE, RUNNABLE SOURCE CODE FOR A SINGLE {target_stack} FILE.
-        FAILURE IS NOT AN OPTION. YOU MUST PROVIDE THE FULL FILE STRUCTURE.
+        TASK: GENERATE ONLY THE SKELETON FOR A COMPLETE {target_stack} FILE.
+        
+        INSTRUCTIONS:
+        1. Include: Package, all necessary Imports, Class Definition.
+        2. ENCAPSULATION: Define PRIVATE MEMBER VARIABLES for every item in this dictionary: {vars_json}.
+        3. DO NOT include method logic or bodies.
+        4. STOP immediately after the variable declarations.
+        5. NO SNIPPETS. Provide the full top-level file structure.
+        """
 
-        LOGIC SPECIFICATION:
-        {json.dumps(compact_spec)}
-
-        STRICT ARCHITECTURAL REQUIREMENTS:
-        1. FULL FILE: Include all imports, package headers, and the public class definition.
-        2. ENCAPSULATION: Map 'state_variables' to PRIVATE CLASS MEMBER VARIABLES.
-        3. LOGIC PARITY: Replicate mathematical formulas and logical branches for all 'business_logic_units'.
-        4. LOGIC DENSITY: Skip verbose comments inside methods to prevent output truncation.
-        5. SINGLE FILE: No snippets. Cohesive standalone code only.
-        6. {java_rules}
-
-        Return ONLY the full source code content.
+    def get_methods_prompt(self, doc_data: dict, target_stack: str) -> str:
+        """Builds the actual logic of the methods."""
+        funcs_json = json.dumps(doc_data.get('functions', []))
+        return f"""
+        TASK: GENERATE THE IMPLEMENTATION FOR ALL METHODS IN A {target_stack} CLASS.
+        
+        LOGIC TO IMPLEMENT:
+        {funcs_json}
+        
+        INSTRUCTIONS:
+        1. Write the full method bodies based on the functional specs.
+        2. Ensure logic parity with the business rules.
+        3. DO NOT include imports or class headers.
+        4. Focus on the internal logic flow.
         """
 
     def stream_llm(self, prompt: str):
-        """SSE Parser optimized for long-duration code synthesis."""
+        """Standardized SSE Streaming Parser."""
         payload = {
             "messages": [
-                {"role": "system", "content": "You are a Senior Software Architect. Output ONLY valid, complete source code."},
+                {"role": "system", "content": "You are a Senior Architect. Output ONLY source code."},
                 {"role": "user", "content": prompt}
             ],
             "temperature": 0.1,
             "stream": True,
-            "max_tokens": 4000 # Absolute high limit for full-file completion
+            "max_tokens": 4000
         }
-
         try:
             with self.session.post(self.endpoint, json=payload, stream=True, timeout=180) as resp:
                 resp.raise_for_status()
@@ -188,45 +160,26 @@ class UnifiedOpenAIAgent:
                     if line:
                         line_text = line.decode("utf-8").strip()
                         if line_text.startswith("data: "):
-                            content_raw = line_text[6:]
-                            if content_raw == "[DONE]":
-                                break
+                            raw = line_text[6:]
+                            if raw == "[DONE]": break
                             try:
-                                chunk_json = json.loads(content_raw)
-                                delta = chunk_json['choices'][0].get('delta', {}).get('content', '')
-                                if delta:
-                                    yield delta
-                            except:
-                                continue
+                                delta = json.loads(raw)['choices'][0].get('delta', {}).get('content', '')
+                                if delta: yield delta
+                            except: continue
         except Exception as e:
             yield f"\n[STREAMING_ERROR: {str(e)}]"
 
     # --- PHASE 4: VALIDATION ---
 
-    def get_test_prompt(self, modern_code: str, target_stack: str) -> str:
-        """Generates comprehensive tests with 100% path coverage."""
+    def get_test_prompt(self, full_code: str, target_stack: str) -> str:
         framework = "JUnit 5" if "Java" in target_stack else "pytest"
-        return f"""
-        TASK: Generate a single comprehensive {framework} test suite for the code provided.
-        Ensure every business logic path and edge case is covered.
-        
-        CODE:
-        {modern_code}
-        """
+        return f"Generate a FULL {framework} test suite for the code below. Ensure 100% path coverage:\n{full_code}"
 
     def calculate_dashboard_metrics(self, doc_data: dict) -> dict:
-        """Dashboard logic for risk heatmap."""
         conf = float(doc_data.get('confidence_score', 0.8))
-        if conf >= 0.85:
-            color, zone = "green", "GREEN (Ready)"
-        elif conf >= 0.60:
-            color, zone = "orange", "AMBER (Review)"
-        else:
-            color, zone = "red", "RED (High Risk)"
-            
         return {
-            "zone": zone,
-            "color": color,
+            "zone": "GREEN" if conf >= 0.85 else "AMBER" if conf >= 0.60 else "RED",
+            "color": "green" if conf >= 0.85 else "orange" if conf >= 0.60 else "red",
             "confidence_pct": f"{conf*100:.0f}%",
             "complexity": doc_data.get('complexity_rating', 5)
         }
