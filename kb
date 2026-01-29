@@ -8,28 +8,29 @@ load_dotenv()
 
 class RAGContextEngine:
     """
-    Steps 3, 4, and 6: Unified Knowledge Engine.
-    Refactored to treat legacy programs as a single cohesive logic block
-    rather than fragmented semantic chunks.
+    Step 3, 4 & 6: Unified Knowledge & Blueprint Engine.
+    Transforms forensic analysis into a cohesive 'Technical Specification' 
+    and 'Modernization Blueprint' for the Synthesis phase.
     """
     def __init__(self):
+        # Configuration from Azure environment
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
         
-        # Connection setup for synchronous context extraction
+        # Connection Pooling for Azure OpenAI
         self.session = requests.Session()
         self.session.headers.update({
             "Content-Type": "application/json",
             "api-key": self.api_key
         })
 
-    def _call_llm(self, prompt: str):
-        """Standardized internal call to the LLM for context generation."""
+    def _call_llm(self, prompt: str) -> str:
+        """Internal helper to communicate with Azure OpenAI."""
         payload = {
             "messages": [
                 {
                     "role": "system", 
-                    "content": "You are a Systems Analyst specializing in Legacy Knowledge Extraction."
+                    "content": "You are a Technical Architect specializing in Business Logic Extraction."
                 },
                 {
                     "role": "user", 
@@ -39,54 +40,74 @@ class RAGContextEngine:
             "temperature": 0
         }
         try:
-            response = self.session.post(self.endpoint, json=payload, timeout=45)
+            response = self.session.post(self.endpoint, json=payload, timeout=60)
             response.raise_for_status()
             return response.json()['choices'][0]['message']['content']
         except Exception as e:
-            return f"CONTEXT_EXTRACTION_ERROR: {str(e)}"
+            return f"BLUEPRINT_GENERATION_ERROR: {str(e)}"
 
-    def get_unified_context(self, graphs: dict, original_code: str):
+    def get_unified_context(self, forensic_data: dict, original_code: str) -> str:
         """
-        Step 3 & 6: Unified Business Logic Spec.
-        Analyzes the entire program's structural graphs and source code 
-        to create a comprehensive 'blueprint' for the Synthesis Agent.
+        Step 3 & 6: Context Retrieval & Blueprinting.
+        Synthesizes the Forensic Analysis into a single architectural blueprint.
+        Ensures the synthesis agent understands global state and execution flow.
         """
         prompt = f"""
-        Act as a Lead Systems Analyst. Your goal is to extract a unified business logic 
-        specification for the following legacy program.
-        
-        STRUCTURAL GRAPHS (AST/CFG/DFG):
-        {json.dumps(graphs)}
-        
-        ORIGINAL SOURCE CODE:
+        Act as a Lead Solutions Architect. Your task is to create a 'Modernization Blueprint' 
+        based on the following Forensic Analysis of a legacy system.
+
+        FORENSIC DATA:
+        {json.dumps(forensic_data)}
+
+        ORIGINAL CODE REFERENCE:
         \"\"\"
-        {original_code}
+        {original_code[:2000]}  # Providing a snippet for context
         \"\"\"
 
         INSTRUCTIONS:
-        1. Identify the Global State: List all shared variables, file pointers, or database connections.
-        2. Map the End-to-End Flow: Describe how data enters the system, is transformed, and is outputted.
-        3. Extract Core Rules: Summarize the primary business math or decision logic in plain English.
-        4. Identify Side Effects: Note any logs, screen displays, or external system calls.
-        
-        Provide a cohesive summary that a Java Architect can use to rewrite this entire program 
-        into a single Java class.
+        1. Unified Logic Flow: Describe the end-to-end execution path from entry to exit.
+        2. State Management: Identify all global variables or file-based states that must be maintained.
+        3. Business Rule Consolidation: Summarize the critical formulas and decision trees.
+        4. Modernization Strategy: Suggest how to structure the modern class (e.g., private helper methods, 
+           data models, and error handling patterns).
+
+        This blueprint will be used by a Coder Agent to write the final source code. 
+        Be extremely precise and technical.
         """
-        
         return self._call_llm(prompt)
 
-    def calculate_documentation_confidence(self, context_summary: str):
+    def formalize_forensic_report(self, doc_data: dict) -> str:
         """
-        Automated correctness evaluation of the generated context.
-        Determines the 'Green/Amber/Red' rating for the dashboard logic.
+        Step 4: Formal Documentation.
+        Converts the raw forensic JSON into a human-readable, professional 
+        Technical Specification for the UI.
         """
-        if "ERROR" in context_summary:
-            return 0.1
-            
-        # Heuristic: A robust context summary should be descriptive
-        length = len(context_summary)
-        if length > 500:
-            return 0.98  # High confidence: Detailed specs
-        elif length > 200:
-            return 0.75  # Medium confidence: Basic specs
-        return 0.40      # Low confidence: Vague specs
+        summary = doc_data.get("summary", "N/A")
+        description = doc_data.get("description", "N/A")
+        
+        report = f"### 📘 Technical Specification\n\n**Overview:** {summary}\n\n**Business Logic:** {description}\n\n"
+        
+        # Add Data Dictionary Section
+        if "data_dictionary" in doc_data:
+            report += "#### 📊 Data Dictionary\n"
+            report += "| Variable | Type | Business Role |\n| :--- | :--- | :--- |\n"
+            for item in doc_data["data_dictionary"]:
+                report += f"| {item.get('variable')} | {item.get('type')} | {item.get('role')} |\n"
+        
+        return report
+
+    def calculate_blueprint_confidence(self, forensic_data: dict) -> float:
+        """
+        Calculates a confidence metric for the Knowledge Base phase.
+        Feeds into the Dashboard's 'Auto-Approval' logic.
+        """
+        # Heuristic: If we have a Data Dictionary and more than 3 functions detected, 
+        # confidence in the knowledge extraction is high.
+        has_dict = len(forensic_data.get("data_dictionary", [])) > 0
+        func_count = len(forensic_data.get("functions", []))
+        
+        score = 0.5
+        if has_dict: score += 0.3
+        if func_count > 2: score += 0.2
+        
+        return min(score, 1.0)
