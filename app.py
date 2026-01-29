@@ -87,7 +87,6 @@ st.markdown("""
 def parse_markdown_report(text):
     """
     Splits the LLM's markdown output into structured sections for UI display.
-    Expects headers like '### 1. ...', '### 2. ...'
     """
     sections = {
         "summary": "Processing...",
@@ -103,7 +102,7 @@ def parse_markdown_report(text):
         if len(parts) > 2: sections["flow"] = parts[2].strip()
         if len(parts) > 3: sections["data"] = parts[3].strip()
         
-        # If headers are missing (fallback), return raw text in summary
+        # Fallback if headers are missing
         if len(parts) < 2: sections["summary"] = text
             
     except Exception:
@@ -166,6 +165,7 @@ if uploaded_file:
         st.session_state.meta = st.session_state.ingestor.extract_metadata(uploaded_file, st.session_state.clean_code)
         st.session_state.current_file = uploaded_file.name
         if "doc_text" in st.session_state: del st.session_state.doc_text
+        if "final_results" in st.session_state: del st.session_state.final_results
 
     meta = st.session_state.meta
     
@@ -271,13 +271,39 @@ if uploaded_file:
             st.success("Modernization Complete.")
             st.session_state.final_results = result_collector
 
-# --- DOWNLOADS ---
-if "final_results" in st.session_state:
+# --- DOWNLOADS SECTION (Docs + Code + Tests) ---
+if "doc_text" in st.session_state or "final_results" in st.session_state:
     st.divider()
-    ext = "java" if "Java" in target_stack else "py"
+    st.subheader("📥 Export Artifacts")
     
-    d1, d2 = st.columns(2)
-    with d1:
-        st.download_button("💾 Download Source Code", st.session_state.final_results["code"], file_name=f"modernized.{ext}")
-    with d2:
-        st.download_button("🧪 Download Test Suite", st.session_state.final_results["tests"], file_name=f"tests.{ext}")
+    # We use 3 columns to include the Documentation Download
+    d1, d2, d3 = st.columns(3)
+    
+    # 1. Download Documentation (Available immediately after Phase 1)
+    if "doc_text" in st.session_state:
+        with d1:
+            st.download_button(
+                label="📄 Download Forensic Spec",
+                data=st.session_state.doc_text,
+                file_name="forensic_analysis.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
+
+    # 2. Download Code & Tests (Available after Phase 2)
+    if "final_results" in st.session_state:
+        ext = "java" if "Java" in target_stack else "py"
+        with d2:
+            st.download_button(
+                label=f"💾 Download Source ({ext})",
+                data=st.session_state.final_results["code"],
+                file_name=f"modernized.{ext}",
+                use_container_width=True
+            )
+        with d3:
+            st.download_button(
+                label=f"🧪 Download Tests ({ext})",
+                data=st.session_state.final_results["tests"],
+                file_name=f"tests.{ext}",
+                use_container_width=True
+            )
