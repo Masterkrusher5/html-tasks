@@ -9,15 +9,15 @@ load_dotenv()
 class ValidationRefactoringAgent:
     """
     Phase 3 & 4 Agent: Unified Code Synthesis and Validation.
-    Supports multi-language conversion (Java, Python, C#, TypeScript) 
-    and handles single-file cohesive transformations.
+    Refactored for Azure OpenAI direct endpoint streaming.
+    Enforces Vanilla Java and Multi-Language support.
     """
     def __init__(self):
-        # API Configuration
+        # Configuration from working Azure setup
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
         
-        # Connection Pooling optimized for high-concurrency and long-duration synthesis
+        # Connection Pooling for high-concurrency streaming
         self.session = requests.Session()
         adapter = requests.adapters.HTTPAdapter(
             pool_connections=20, 
@@ -30,20 +30,16 @@ class ValidationRefactoringAgent:
             "api-key": self.api_key
         })
 
-    def stream_llm(self, prompt: str, target_lang: str):
+    def stream_llm(self, prompt: str):
         """
-        Standardized Azure OpenAI SSE (Server-Sent Events) streaming parser.
-        Dynamically adjusts persona based on the target language.
+        Direct Azure SSE (Server-Sent Events) streaming parser.
+        Yields content character-by-character for real-time UI updates.
         """
-        # Set specific persona for the target language
-        system_persona = f"You are a Senior {target_lang} Software Architect specializing in legacy modernization."
-        
         payload = {
             "messages": [
                 {
                     "role": "system", 
-                    "content": f"{system_persona} Output only high-quality, production-ready source code. "
-                               "Maintain exact business logic and follow modern best practices for the language."
+                    "content": "You are a Senior Software Architect specializing in legacy modernization."
                 },
                 {
                     "role": "user", 
@@ -55,7 +51,7 @@ class ValidationRefactoringAgent:
         }
 
         try:
-            # Longer timeout for large unified file generation
+            # We use stream=True for real-time token delivery
             with self.session.post(self.endpoint, json=payload, stream=True, timeout=120) as response:
                 response.raise_for_status()
                 
@@ -65,7 +61,7 @@ class ValidationRefactoringAgent:
                     
                     line_text = line.decode("utf-8").strip()
                     if line_text.startswith("data: "):
-                        content_raw = line_text[6:] # Strip 'data: '
+                        content_raw = line_text[6:] # Strip 'data: ' prefix
                         
                         if content_raw == "[DONE]":
                             break
@@ -84,52 +80,40 @@ class ValidationRefactoringAgent:
 
     # --- PHASE 3: UNIFIED CODE SYNTHESIS PROMPT ---
 
-    def get_unified_synthesis_prompt(self, context: str, original_code: str, target_lang: str) -> str:
+    def get_unified_synthesis_prompt(self, context_doc: dict, target_lang: str) -> str:
         """
-        Builds a language-specific synthesis prompt for unified file generation.
+        Builds a language-specific synthesis prompt. 
+        Enforces Vanilla Java 17+ (No Spring Boot) if Java is selected.
         """
-        # Determine language-specific constraints
+        # Specific constraints for Vanilla Java vs other languages
         constraints = ""
         if "Java" in target_lang:
             constraints = (
-                "- Use Vanilla Java 17+. \n"
-                "- NO SPRING BOOT: Do not use @Service, @Autowired, etc.\n"
-                "- Use Standard JDK libraries only (java.util, java.math, etc.)."
+                "- Target: Vanilla Java 17+.\n"
+                "- NO SPRING BOOT: Do not use @Service, @Autowired, @Component, etc.\n"
+                "- NO EXTERNAL FRAMEWORKS: Use standard JDK libraries only (java.util, java.math, java.time).\n"
+                "- Structure: Single cohesive public class with a meaningful name."
             )
         elif "Python" in target_lang:
-            constraints = (
-                "- Use Python 3.10+.\n"
-                "- Include PEP 484 Type Hints.\n"
-                "- Use Pydantic for data validation if appropriate.\n"
-                "- Maintain idiomatic 'Pythonic' style."
-            )
+            constraints = "- Target: Python 3.10+.\n- Use Type Hints and standard libraries.\n- Structure: Single clean module."
         elif "C#" in target_lang:
-            constraints = (
-                "- Use .NET 6/7/8.\n"
-                "- Use File-scoped namespaces and primary constructors if applicable.\n"
-                "- Use C# standard naming conventions."
-            )
-        elif "TypeScript" in target_lang:
-            constraints = (
-                "- Use TypeScript 5+.\n"
-                "- Use ES Modules (import/export).\n"
-                "- Define strict Interfaces/Types for all data structures."
-            )
+            constraints = "- Target: .NET Core 6+.\n- Structure: Single cohesive class with file-scoped namespaces."
+        else:
+            constraints = f"- Use idiomatic standards for {target_lang}."
 
         return f"""
-        TASK: Transform the provided legacy source code into a SINGLE cohesive {target_lang} file.
+        TASK: Synthesize a modern, production-ready {target_lang} source file from the 
+        provided Forensic Specification.
         
-        BUSINESS LOGIC SPECIFICATION:
-        \"\"\"{context}\"\"\"
-        
-        LEGACY SOURCE CODE:
-        \"\"\"{original_code}\"\"\"
+        FORENSIC SPECIFICATION:
+        \"\"\"{json.dumps(context_doc)}\"\"\"
         
         CONSTRAINTS:
         {constraints}
-        - Maintain the EXACT business logic and calculation formulas.
-        - Decouple procedural legacy flow into clean, modular methods.
-        - Provide the FULL source code content only.
+        - Preserve ALL business logic, mathematical formulas, and conditional branching exactly as identified in the spec.
+        - Refactor procedural 'spaghetti' logic into modular, clean methods.
+        - Handle Data Mapping according to the provided Data Dictionary.
+        - Return ONLY the full code content inside a single file.
         """
 
     # --- PHASE 4: UNIFIED UNIT TEST PROMPT ---
@@ -143,41 +127,37 @@ class ValidationRefactoringAgent:
             "Java": "JUnit 5",
             "Python": "pytest",
             "C#": "xUnit",
-            "TypeScript": "Jest",
-            "JavaScript": "Mocha"
+            "TypeScript": "Jest"
         }
         
-        # Extract base name to match framework (e.g., "Python (FastAPI)" -> "Python")
-        base_lang = target_lang.split()[0]
+        base_lang = target_lang.split()[0] # e.g., "Java (Vanilla)" -> "Java"
         framework = framework_map.get(base_lang, "standard testing library")
         
         return f"""
-        TASK: Generate a single comprehensive {framework} unit test file for the provided {target_lang} code.
+        TASK: Generate a single comprehensive {framework} test file for the provided {target_lang} code.
         
         CODE TO TEST:
         \"\"\"{modern_code}\"\"\"
         
         REQUIREMENTS:
-        1. Use {framework} for all assertions.
-        2. Include test cases for success paths and edge cases (e.g., nulls, zero values, boundaries).
-        3. Mock external dependencies (DB/Files) if present in the code.
-        4. Provide the FULL test code content only.
+        1. Use {framework} assertions.
+        2. Include test cases for successful execution and boundary/edge cases identified in the logic.
+        3. Use standard mocking patterns if external file/IO dependencies were synthesized.
+        4. Return ONLY the test code content.
         """
 
-    # --- PHASE 4: AUTO-CORRECTION (Reflection Loop) ---
+    # --- PHASE 4: AUTO-CORRECTION (Reflection) ---
 
-    def refine_unified_code(self, code: str, error_log: str, target_lang: str):
+    def refine_code(self, code: str, error_log: str, target_lang: str):
         """
-        Self-correction agent used to fix syntax or logical errors in the generated code.
+        Self-correction loop if the generated code has syntax or logical errors.
         """
         prompt = f"""
-        The following {target_lang} code has errors. 
-        Fix the code while preserving the business logic.
-        
-        ERROR LOG: {error_log}
+        The following {target_lang} code has errors. Fix them while maintaining business rules.
+        ERROR: {error_log}
         CODE: {code}
         """
-        full_refinement = ""
-        for chunk in self.stream_llm(prompt, target_lang):
-            full_refinement += chunk
-        return full_refinement
+        full_fix = ""
+        for delta in self.stream_llm(prompt):
+            full_fix += delta
+        return full_fix
