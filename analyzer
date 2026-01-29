@@ -1,73 +1,99 @@
 import os
 import json
-import requests
 import re
+import requests
 from dotenv import load_dotenv
 
 # Load Environment Variables
 load_dotenv()
 
-class StaticSemanticAnalyzer:
+class UnifiedOpenAIAgent:
     """
-    Phase 2: Static + Semantic Analyzer.
-    Parses legacy code into logical graphs (AST, CFG, DFG) using direct LLM calls.
+    Forensic Intelligence Engine for Azure OpenAI.
+    Performs deep-dive technical and functional analysis of legacy source code.
     """
     def __init__(self):
+        # Configuration from Azure environment
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
         
-        # Connection setup with working Azure OpenAI headers
+        # Connection Pooling for high-stability API calls
         self.session = requests.Session()
         self.session.headers.update({
             "Content-Type": "application/json",
             "api-key": self.api_key
         })
 
-    def _sanitize_json(self, text):
+    def _sanitize_json(self, text: str) -> dict:
         """
-        Extracts JSON content from the LLM's response, handling potential 
-        conversational filler or markdown code blocks.
+        Extracts and parses JSON from the LLM response.
+        Handles markdown wrappers (```json ... ```).
         """
         try:
-            # Look for the first '{' and the last '}'
-            start_idx = text.find("{")
-            end_idx = text.rfind("}")
-            if start_idx != -1 and end_idx != -1:
-                json_str = text[start_idx : end_idx + 1]
-                return json.loads(json_str)
-            return None
-        except Exception as e:
-            print(f"JSON Parsing Error: {e}")
-            return None
+            # 1. Try direct parsing
+            return json.loads(text)
+        except json.JSONDecodeError:
+            try:
+                # 2. Strip markdown code blocks and try again
+                clean_text = re.sub(r'```json|```', '', text).strip()
+                return json.loads(clean_text)
+            except Exception:
+                # 3. Last resort: Regex search for the first { and last }
+                match = re.search(r'\{.*\}', text, re.DOTALL)
+                if match:
+                    return json.loads(match.group())
+                return {
+                    "summary": "Parsing Error",
+                    "description": "The AI response could not be parsed as structured JSON.",
+                    "functions": [],
+                    "confidence_score": 0.0
+                }
 
-    def generate_graphs(self, code: str, lang: str):
+    # --- PHASE 2: FORENSIC KNOWLEDGE EXTRACTION ---
+
+    def generate_documentation(self, code: str) -> dict:
         """
-        Step 2: Logic Parsing.
-        Maps code into AST (Structure), CFG (Control Flow), and DFG (Data Flow).
+        Performs a deep-dive forensic analysis to create a Living Specification.
+        Extracts business rules, data dictionaries, and logic flows.
         """
         prompt = f"""
-        Act as a Compiler Engineer and Static Analysis Tool. 
-        Analyze the provided {lang} source code and generate a structural mapping.
+        Act as a Principal Systems Architect and Forensic Software Engineer. 
+        Perform an exhaustive technical and functional analysis of the following legacy code.
 
-        INPUT CODE:
+        SOURCE CODE:
         \"\"\"
         {code}
         \"\"\"
 
-        Provide a structured JSON output with the following keys:
-        1. "ast_nodes": A list of key structural components (e.g., VariableDeclaration, IfStatement, Loop).
-        2. "control_flow": A mapping of the logic paths. Identify entry points, branches (true/false paths), and exit points.
-        3. "data_flow": Track the lifecycle of variables. Identify where variables are 'defined', 'modified', and 'read'.
-        4. "complexity_metrics": Calculate Cyclomatic Complexity and nesting depth.
+        Provide a structured JSON output with the following EXACT keys:
+        1. "summary": A professional executive summary of the code's objective.
+        2. "description": A comprehensive, multi-paragraph deep-dive into the end-to-end 
+           business logic. Explain the 'WHY' behind the operations, the architectural 
+           data flow, and state management.
+        3. "functions": A list of every procedure, paragraph, or subroutine containing:
+           - "name": Formal identifier.
+           - "purpose": Detailed functional goal.
+           - "logic_explanation": A granular, step-by-step breakdown of the logic inside.
+           - "inputs_outputs": Specific variables or files accessed/modified.
+           - "business_rules": Specific financial or logical rules enforced in this block.
+        4. "data_dictionary": A list of key variables/fields found:
+           - "variable": Legacy name.
+           - "type": Inferred data type.
+           - "role": Role/Meaning within the business context.
+        5. "dependencies": External files (e.g., SELECT/ASSIGN), DB tables, or libraries.
+        6. "complexity_rating": Integer (1-10) based on nesting and spaghetti factors.
+        7. "confidence_score": Float (0.0 to 1.0) representing analysis certainty.
+        8. "auto_approval_status": Boolean (True if logic is clear and confidence > 0.85).
 
-        Return ONLY the JSON object. Do not include explanations.
+        Ensure 'description' and 'logic_explanation' are extremely verbose and technical.
+        Return ONLY the JSON object.
         """
-
+        
         payload = {
             "messages": [
                 {
                     "role": "system", 
-                    "content": "You are a specialized tool for legacy code structural analysis. You only output valid JSON."
+                    "content": "You are a Forensic Systems Architect. You output strictly valid, detailed JSON."
                 },
                 {
                     "role": "user", 
@@ -78,45 +104,42 @@ class StaticSemanticAnalyzer:
         }
 
         try:
-            response = self.session.post(self.endpoint, json=payload, timeout=40)
+            # Azure OpenAI direct call
+            response = self.session.post(self.endpoint, json=payload, timeout=90)
             response.raise_for_status()
             
             raw_content = response.json()['choices'][0]['message']['content']
-            analysis_results = self._sanitize_json(raw_content)
-            
-            # If the LLM failed to return structured data, return a fallback structure
-            if not analysis_results:
-                return {
-                    "error": "Failed to parse structural logic",
-                    "ast_nodes": [],
-                    "control_flow": {},
-                    "data_flow": {}
-                }
-                
-            return analysis_results
+            return self._sanitize_json(raw_content)
 
         except Exception as e:
             return {
-                "error": str(e),
-                "ast_nodes": [],
-                "control_flow": {},
-                "data_flow": {}
+                "summary": "Analysis Connection Error",
+                "description": f"Failed to perform forensic analysis: {str(e)}",
+                "functions": [],
+                "data_dictionary": [],
+                "confidence_score": 0.0,
+                "auto_approval_status": False
             }
 
-    def calculate_confidence_score(self, graphs):
+    def calculate_dashboard_metrics(self, doc_data: dict) -> dict:
         """
-        Used for Phase 2 Evaluation Dashboard.
-        Calculates a confidence metric based on the completeness of the analysis.
+        Maps the forensic analysis data to Dashboard Heatmap zones.
+        Determines if the module is Green, Amber, or Red.
         """
-        if "error" in graphs:
-            return 0.0
-            
-        # Heuristic: More nodes and flow paths usually indicate a successful parse
-        node_count = len(graphs.get("ast_nodes", []))
-        flow_count = len(graphs.get("control_flow", {}))
+        conf = doc_data.get('confidence_score', 0)
+        auto = doc_data.get('auto_approval_status', False)
         
-        if node_count > 0 and flow_count > 0:
-            return 0.95
-        elif node_count > 0:
-            return 0.70
-        return 0.30
+        # Quality Gate Logic
+        if auto and conf >= 0.85:
+            zone, color = "GREEN (Auto-Approved)", "green"
+        elif conf >= 0.60:
+            zone, color = "AMBER (Review Recommended)", "orange"
+        else:
+            zone, color = "RED (Manual Check Required)", "red"
+            
+        return {
+            "zone": zone,
+            "color": color,
+            "confidence_pct": f"{conf * 100:.1f}%",
+            "complexity": doc_data.get('complexity_rating', 'N/A')
+        }
