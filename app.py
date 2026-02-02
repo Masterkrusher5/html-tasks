@@ -28,7 +28,7 @@ if "agent" not in st.session_state:
 
 # --- MAIN UI ---
 st.title("🛡️ Chain-of-Thought Legacy Modernizer")
-st.markdown("Global Context Extraction ➡️ Chunk-Based Synthesis ➡️ Unified Assembly")
+st.markdown("Global Context Extraction ➡️ Chunk-Based Live Synthesis ➡️ Unified Assembly")
 
 # Sidebar
 with st.sidebar:
@@ -89,7 +89,7 @@ if uploaded_file:
         code_slot = st.empty()
         
         # Mutable container to hold the full code across the thread
-        # We use a list because lists are mutable and accessible in nested scopes
+        # We use a list because lists are mutable and accessible in nested scopes without 'nonlocal' issues
         code_container = []
 
         def chain_worker():
@@ -115,17 +115,18 @@ if uploaded_file:
                         status_slot.text(f"Phase 2: Converting Chunk {i+1}/{total}: {chunk['name']}...")
                         prog_bar.progress((i + 1) / total)
                     
-                    chunk_buffer = f"\n    // --- Converted Logic: {chunk['name']} ---\n"
+                    # Add Header for this chunk
+                    chunk_header = f"\n    // --- Converted Logic: {chunk['name']} ---\n"
+                    code_container.append(chunk_header)
                     
-                    # Stream specific chunk logic
+                    # Stream specific chunk logic character-by-character
                     for delta in agent.process_chunk_stream(chunk, global_ctx, target_stack):
-                        chunk_buffer += delta
-                    
-                    # Append completed chunk to main buffer
-                    code_container.append(chunk_buffer + "\n")
-                    
-                    # Update UI with the growing file
-                    with ui_lock: code_slot.code("".join(code_container) + " ▌", language=lang_key)
+                        # Append directly to the last item in the list (current chunk)
+                        code_container[-1] += delta
+                        
+                        # UPDATE UI INSIDE THE LOOP (This enables Real-time Streaming)
+                        with ui_lock: 
+                            code_slot.code("".join(code_container) + " ▌", language=lang_key)
 
                 # C. Finalize File
                 closing_brace = "\n}" if ("Java" in target_stack or "C#" in target_stack) else ""
