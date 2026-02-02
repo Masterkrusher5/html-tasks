@@ -1,159 +1,213 @@
 import streamlit as st
 import threading
 import time
+import os
 from dotenv import load_dotenv
+
+# --- THREADING CONTEXT IMPORTS ---
+# Critical for preventing 'NoSessionContext' errors during real-time streaming
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 
-# Import core modules
+# Import specialized core modules
 from core.ingestion import FileIngestor
 from core.analyzer import UnifiedOpenAIAgent
 
 # Load environment variables
 load_dotenv()
 
-# 1. Configuration
+# 1. Page Configuration
 st.set_page_config(
-    page_title="Chained Modernizer Pro",
+    page_title="Forensic Modernizer Pro",
     page_icon="🛡️",
     layout="wide"
 )
 
-# UI Lock for thread-safe streaming
+# UI Lock for thread-safe websocket communication
 ui_lock = threading.Lock()
 
-# 2. Initialize Engines
+# 2. Initialize Engines in Session State
 if "agent" not in st.session_state:
     st.session_state.agent = UnifiedOpenAIAgent()
     st.session_state.ingestor = FileIngestor()
 
-# --- MAIN UI ---
-st.title("🛡️ Chain-of-Thought Legacy Modernizer")
-st.markdown("Global Context Extraction ➡️ Chunk-Based Live Synthesis ➡️ Unified Assembly")
+# --- CUSTOM CSS FOR PROFESSIONAL UI ---
+st.markdown("""
+    <style>
+    .report-container {
+        background-color: #ffffff;
+        padding: 25px;
+        border-radius: 10px;
+        border: 1px solid #e0e0e0;
+        color: #2c3e50 !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        margin-bottom: 20px;
+    }
+    .status-green { color: #27ae60; font-weight: bold; }
+    .status-amber { color: #f39c12; font-weight: bold; }
+    </style>
+""", unsafe_allow_html=True)
 
-# Sidebar
+# --- MAIN UI INTERFACE ---
+st.title("🛡️ Forensic Legacy Modernizer Pro")
+st.markdown("Chained Extraction ➡️ Multi-Threaded Logic Synthesis ➡️ Unified Assembly")
+
+# --- SIDEBAR CONFIGURATION ---
 with st.sidebar:
     st.header("Pipeline Settings")
-    target_stack = st.selectbox("Target Architecture", ["Java (Vanilla 17+)", "Python (Standard)", "C# (.NET Core)"])
+    target_stack = st.selectbox("Target Architecture", [
+        "Java (Vanilla 17+)", 
+        "Python (Standard)", 
+        "C# (.NET Core)"
+    ])
     st.divider()
-    st.info("ℹ️ **Chunking Mode:**\nLarge files are split into logical units (Paragraphs/Methods) to bypass token limits while preserving global state.")
+    st.info("🚀 **Context-Aware Mode:**\nLogic is converted chunk-by-chunk while preserving global class state to prevent truncation.")
+    
     if st.button("Reset Application"):
         st.session_state.clear()
         st.rerun()
 
-# --- STEP 1: INGESTION & CHUNKING ---
-uploaded_file = st.file_uploader("Upload Large Legacy File", type=['cbl', 'cob', 'vb', 'java', 'txt'])
+# --- STEP 1: INGESTION & FORENSIC CHUNKING ---
+uploaded_file = st.file_uploader("Upload Legacy Source File", type=['cbl', 'cob', 'vb', 'bas', 'frm', 'java', 'txt'])
 
 if uploaded_file:
-    # 1. Read & Normalize
+    # Handle ingestion and persistence
     if "chunks" not in st.session_state or st.session_state.get("current_file") != uploaded_file.name:
         raw_content = st.session_state.ingestor.read_uploaded_file(uploaded_file)
         norm_code = st.session_state.ingestor.normalize(raw_content)
         
         with st.spinner("Parsing Logic Tree & Building Dependency Graph..."):
-            # Intelligent Chunking
+            # 1. Chunking
             parsed_data = st.session_state.ingestor.chunk_code(norm_code, uploaded_file.name)
-            
-            # Save to session
             st.session_state.chunks = parsed_data['chunks']
             st.session_state.global_context = parsed_data['global_context']
             st.session_state.current_file = uploaded_file.name
             
-            # Generate Context Summary
-            summary_data = st.session_state.agent.generate_summary(st.session_state.global_context)
-            st.session_state.summary = summary_data.get('summary', 'Analysis failed')
+            # 2. Generate Forensic Summary
+            summ_data = st.session_state.agent.generate_summary(st.session_state.global_context)
+            st.session_state.summary = summ_data.get('summary', 'Analysis failed.')
 
-    # 2. Display Ingestion Dashboard
-    st.success(f"Successfully parsed **{len(st.session_state.chunks)} functional chunks** from {uploaded_file.name}.")
+    # Metadata Dashboard
+    st.success(f"Forensic Analysis Complete: Identified **{len(st.session_state.chunks)} functional chunks**.")
     
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        st.subheader("Global Context (State)")
-        with st.expander("View Data Division / Global Variables", expanded=True):
-            st.code(st.session_state.global_context, language='yaml')
-    
-    with col2:
-        st.subheader("System Summary")
-        st.info(st.session_state.summary)
-
-    # --- STEP 2: CHAINED SYNTHESIS ---
+    # Render Documentation Dashboard
     st.divider()
+    col_doc_left, col_doc_right = st.columns([1, 1])
     
-    if st.button("🚀 Start Chained Transformation", type="primary"):
+    with col_doc_left:
+        st.subheader("📑 Technical Executive Summary")
+        st.markdown(f'<div class="report-container">{st.session_state.summary}</div>', unsafe_allow_html=True)
+        st.download_button("📄 Download Forensic Spec (.md)", st.session_state.summary, file_name="forensic_spec.md")
+    
+    with col_doc_right:
+        st.subheader("🗃️ Global Context (State Variables)")
+        with st.expander("View Data Structures", expanded=True):
+            st.code(st.session_state.global_context, language='yaml')
+
+    # --- STEP 2: CHAINED LOGIC SYNTHESIS ---
+    st.divider()
+    st.subheader(f"🚀 Phase 2: Unified Modernization ({target_stack})")
+    
+    if st.button("Start Chained Transformation", type="primary", use_container_width=True):
         ctx = get_script_run_ctx()
         
-        st.subheader(f"Live Synthesis Stream ({target_stack})")
-        
-        # UI Slots
         status_slot = st.empty()
         prog_bar = st.progress(0)
-        code_slot = st.empty()
         
-        # Mutable container to hold the full code across the thread
-        # We use a list because lists are mutable and accessible in nested scopes without 'nonlocal' issues
-        code_container = []
+        # Synthesis Slots
+        col_code, col_test = st.columns(2)
+        with col_code:
+            st.markdown("### 🛠️ Modern Source Code")
+            code_slot = st.empty()
+        with col_test:
+            st.markdown("### 🧪 Unit Test Suite")
+            test_slot = st.empty()
 
-        def chain_worker():
+        # Thread-safe code container
+        code_container = []
+        final_results = {"code": "", "tests": ""}
+
+        def chained_worker():
             agent = st.session_state.agent
-            global_ctx = st.session_state.global_context
+            g_ctx = st.session_state.global_context
             chunks = st.session_state.chunks
-            
-            # Detect language for syntax highlighting
-            lang_key = "java" if "Java" in target_stack else "python" if "Python" in target_stack else "csharp"
+            lang_key = "java" if "Java" in target_stack else "python"
             
             try:
-                # A. Generate Class Skeleton (Headers/Variables)
-                with ui_lock: status_slot.text("Phase 1: Synthesizing Class Structure & State...")
-                skeleton = agent.generate_global_structure(global_ctx, target_stack)
-                
+                # 1. Synthesize Class Skeleton
+                with ui_lock: status_slot.info("Synthesizing Class Header & Member Variables...")
+                skeleton = agent.generate_global_structure(g_ctx, target_stack)
                 code_container.append(skeleton + "\n\n")
                 with ui_lock: code_slot.code("".join(code_container), language=lang_key)
 
-                # B. Iterate Logic Chunks
+                # 2. Iterate Logic Chunks
                 total = len(chunks)
                 for i, chunk in enumerate(chunks):
-                    with ui_lock: 
-                        status_slot.text(f"Phase 2: Converting Chunk {i+1}/{total}: {chunk['name']}...")
+                    with ui_lock:
+                        status_slot.info(f"Converting Chunk {i+1}/{total}: {chunk['name']}...")
                         prog_bar.progress((i + 1) / total)
                     
-                    # Add Header for this chunk
-                    chunk_header = f"\n    // --- Converted Logic: {chunk['name']} ---\n"
-                    code_container.append(chunk_header)
+                    code_container.append(f"\n    // --- Logic Implementation: {chunk['name']} ---\n")
                     
-                    # Stream specific chunk logic character-by-character
-                    for delta in agent.process_chunk_stream(chunk, global_ctx, target_stack):
-                        # Append directly to the last item in the list (current chunk)
+                    # Stream specific logic
+                    for delta in agent.process_chunk_stream(chunk, g_ctx, target_stack):
                         code_container[-1] += delta
-                        
-                        # UPDATE UI INSIDE THE LOOP (This enables Real-time Streaming)
-                        with ui_lock: 
+                        with ui_lock:
+                            # Update UI live as tokens arrive
                             code_slot.code("".join(code_container) + " ▌", language=lang_key)
+                    
+                    code_container.append("\n")
 
-                # C. Finalize File
-                closing_brace = "\n}" if ("Java" in target_stack or "C#" in target_stack) else ""
-                code_container.append(closing_brace)
-                final_source = "".join(code_container)
+                # 3. Assemble and Finalize
+                if "Java" in target_stack or "C#" in target_stack:
+                    code_container.append("\n}")
                 
-                with ui_lock: 
-                    code_slot.code(final_source, language=lang_key)
-                    status_slot.success("Transformation Complete! All chunks assembled.")
-                    prog_bar.progress(100)
-                    st.session_state.final_code = final_source
+                assembled_code = "".join(code_container)
+                with ui_lock: code_slot.code(assembled_code, language=lang_key)
+                st.session_state.final_code = assembled_code
+
+                # 4. Generate Tests (Streaming)
+                with ui_lock: status_slot.info("Generating Comprehensive Unit Tests...")
+                full_tests = ""
+                test_prompt = agent.get_test_prompt(assembled_code, target_stack)
+                for delta in agent.stream_llm(test_prompt, max_tokens=2000):
+                    full_tests += delta
+                    with ui_lock:
+                        test_slot.code(full_tests + " ▌", language=lang_key)
+                
+                with ui_lock:
+                    test_slot.code(full_tests, language=lang_key)
+                    status_slot.success("🎯 Modernization & Testing Complete!")
+                
+                st.session_state.final_tests = full_tests
 
             except Exception as e:
                 with ui_lock: st.error(f"Chain Error: {str(e)}")
 
-        # Launch Thread
-        t = threading.Thread(target=chain_worker)
+        # Launch background thread
+        t = threading.Thread(target=chained_worker)
         add_script_run_ctx(t, ctx)
         t.start()
 
-# --- STEP 3: DOWNLOAD ---
+# --- STEP 3: PERSISTENT DOWNLOADS ---
 if "final_code" in st.session_state:
     st.divider()
+    st.subheader("📥 Download Modernized Artifacts")
+    
     ext = "java" if "Java" in target_stack else "py" if "Python" in target_stack else "cs"
-    st.download_button(
-        label="💾 Download Complete File", 
-        data=st.session_state.final_code, 
-        file_name=f"modernized_full.{ext}",
-        mime="text/plain"
-    )
+    
+    dl_col1, dl_col2 = st.columns(2)
+    with dl_col1:
+        st.download_button(
+            label=f"💾 Download Source ({ext.upper()})",
+            data=st.session_state.final_code,
+            file_name=f"modernized_full.{ext}",
+            use_container_width=True
+        )
+    with dl_col2:
+        if "final_tests" in st.session_state:
+            st.download_button(
+                label=f"🧪 Download Test Suite ({ext.upper()})",
+                data=st.session_state.final_tests,
+                file_name=f"test_suite_full.{ext}",
+                use_container_width=True
+            )
