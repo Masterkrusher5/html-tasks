@@ -3,44 +3,71 @@ import json
 import requests
 from dotenv import load_dotenv
 
+# Load Environment Variables
 load_dotenv()
 
 class UnifiedOpenAIAgent:
+    """
+    Chained Synthesis Engine.
+    Communicates via direct HTTP requests to an LLM endpoint.
+    Handles Global Context analysis and reliable Chunk-by-Chunk code streaming.
+    """
     def __init__(self):
+        # Configuration from .env
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
+        
+        if not self.endpoint or not self.api_key:
+            return
+
+        # Connection Pooling for high performance
         self.session = requests.Session()
+        # Most enterprise gateways use 'api-key'. For standard OpenAI, use 'Authorization': 'Bearer ...'
         self.session.headers.update({
             "api-key": self.api_key,
             "Content-Type": "application/json"
         })
 
+    # --- PART 1: SYSTEM SUMMARY (NEW LOGIC) ---
     def generate_summary(self, global_context: str) -> dict:
-        if not global_context or len(global_context) < 50:
-            return {"summary": "Insufficient data to generate summary."}
+        """
+        Generates a concise technical summary based on the Data Structures found.
+        """
+        if not global_context or len(global_context) < 30:
+            return {"summary": "Insufficient data to generate a detailed summary."}
 
         prompt = f"""
-        Analyze this Legacy Code Context (Headers/Variables) and provide a 200-word System Summary.
+        Analyze this Legacy Code Context (Headers/Variables) and provide a 100-150 word technical summary.
         Identify the business domain and potential logic based on variables found.
         
         CODE CONTEXT:
-        {global_context[:12000]}
+        {global_context[:10000]}
         
         Return JSON: {{"summary": "Your text here"}}
         """
         
         payload = {"messages": [{"role": "user", "content": prompt}], "temperature": 0.2}
         try:
+            # Set a 60-second timeout for the summary
             response = self.session.post(self.endpoint, json=payload, timeout=60)
-            res_json = response.json()
-            content = res_json['choices'][0]['message']['content']
-            if "```" in content:
-                content = content.split("```json")[1].split("```")[0].strip() if "```json" in content else content.replace("```", "").strip()
+            response.raise_for_status()
+            content = response.json()['choices'][0]['message']['content']
+            
+            # Clean up potential Markdown wrappers
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.replace("```", "").strip()
+                
             return json.loads(content)
-        except:
-            return {"summary": "Summary analysis failed."}
+        except Exception as e:
+            return {"summary": f"Summary extraction was not possible. (Error: {str(e)})"}
 
+    # --- PART 2: SKELETON SYNTHESIS ---
     def generate_global_structure(self, global_context: str, target_lang: str) -> str:
+        """
+        Generates the Class Header, Imports, and Private Member Variables.
+        """
         prompt = f"""
         TASK: Generate the Class Structure (Header, Imports, Private Member Variables) for {target_lang}.
         Based on this Legacy Global Context:
@@ -48,29 +75,36 @@ class UnifiedOpenAIAgent:
         {global_context[:8000]}
         
         INSTRUCTIONS:
-        1. Define the class.
+        1. Define the class structure.
         2. Define private member variables to match the legacy data types.
-        3. Do NOT write any methods or logic blocks yet.
-        4. Return Code Only. No markdown wrappers.
+        3. Do NOT write any method bodies or logic.
+        4. Return ONLY code. No markdown blocks.
         """
         
         payload = {"messages": [{"role": "user", "content": prompt}], "temperature": 0.1}
         try:
             response = self.session.post(self.endpoint, json=payload, timeout=60)
+            response.raise_for_status()
             content = response.json()['choices'][0]['message']['content']
+            # Remove Markdown backticks if the LLM provided them
             return content.replace("```java", "").replace("```python", "").replace("```", "").strip()
-        except:
-            return f"// Error generating structure for {target_lang}"
+        except Exception as e:
+            return f"// Error generating structure for {target_lang}: {str(e)}"
 
+    # --- PART 3: LOGIC STREAMING (CHAINED CHUNK MODE) ---
     def process_chunk_stream(self, chunk: dict, global_context: str, target_lang: str):
-        java_constraints = "Use Vanilla Java 17+ syntax. No Spring annotations." if "Java" in target_lang else ""
+        """
+        Streams the conversion of a single logical unit.
+        Bypasses token limits by focusing on one paragraph at a time.
+        """
+        java_rules = "Vanilla Java 17+ syntax. No Spring annotations." if "Java" in target_lang else ""
 
         prompt = f"""
         TASK: Convert this specific Legacy Code Chunk to {target_lang}.
         
-        GLOBAL CONTEXT (Class Variables/State available):
+        GLOBAL CONTEXT (State available in the class):
         \"\"\"
-        {global_context[:6000]} 
+        {global_context[:5000]} 
         \"\"\"
         
         CURRENT CHUNK TO CONVERT:
@@ -81,10 +115,10 @@ class UnifiedOpenAIAgent:
         \"\"\"
         
         INSTRUCTIONS:
-        1. Output ONLY the code for this specific method/function.
-        2. Use the Global Context to correctly reference class member variables.
-        3. Do NOT output class headers, imports, or closing braces.
-        4. {java_constraints}
+        1. Output ONLY the code for this method/function.
+        2. Use the Global Context to correctly reference class variables.
+        3. Do NOT output class headers or imports.
+        4. {java_rules}
         
         START CODE IMMEDIATELY:
         """
@@ -96,37 +130,44 @@ class UnifiedOpenAIAgent:
             ],
             "temperature": 0.1,
             "stream": True,
-            "max_tokens": 2000
+            "max_tokens": 2500
         }
 
         try:
-            with self.session.post(self.endpoint, json=payload, stream=True, timeout=120) as resp:
+            # timeout=(connect_timeout, read_timeout)
+            with self.session.post(self.endpoint, json=payload, stream=True, timeout=(5, 120)) as resp:
+                resp.raise_for_status()
                 for line in resp.iter_lines():
-                    if line:
-                        line_text = line.decode("utf-8").strip()
-                        if line_text.startswith("data: "):
-                            raw = line_text[6:]
-                            if raw == "[DONE]": break
-                            try:
-                                chunk_json = json.loads(raw)
-                                delta = chunk_json['choices'][0].get('delta', {}).get('content', '')
-                                if delta: yield delta
-                            except: continue
+                    if not line:
+                        continue
+                    
+                    line_text = line.decode("utf-8").strip()
+                    
+                    # End of stream signal
+                    if line_text == "data: [DONE]":
+                        break
+                    
+                    if line_text.startswith("data: "):
+                        try:
+                            # Parse the JSON delta
+                            raw_json = line_text[6:]
+                            chunk_json = json.loads(raw_json)
+                            delta = chunk_json['choices'][0].get('delta', {}).get('content', '')
+                            if delta:
+                                yield delta
+                        except (json.JSONDecodeError, KeyError, IndexError):
+                            continue
         except Exception as e:
-            yield f"// Error converting chunk {chunk['name']}: {str(e)}"
+            yield f"\n// [CRITICAL ERROR in {chunk['name']}]: {str(e)}\n"
 
     def get_test_prompt(self, full_code: str, target_lang: str) -> str:
+        """Helper to prepare the unit test instruction."""
         framework = "JUnit 5" if "Java" in target_lang else "pytest"
-        return f"""
-        TASK: Generate a single comprehensive {framework} test file for the modernized code below.
-        Ensure every business logic path and edge case is covered.
-        
-        CODE TO TEST:
-        {full_code[:15000]}
-        """
+        return f"Generate a FULL {framework} unit test file for this modernized code. Include imports:\n{full_code[:12000]}"
 
     def calculate_dashboard_metrics(self, doc_text: str) -> dict:
+        """Heuristic calculation for the Dashboard zones."""
         length = len(doc_text)
         if length > 500:
-            return {"zone": "GREEN", "color": "green", "confidence_pct": "95%", "complexity": 5}
-        return {"zone": "AMBER", "color": "orange", "confidence_pct": "70%", "complexity": 8}
+            return {"zone": "GREEN (Ready)", "color": "green", "confidence_pct": "98%", "complexity": 5}
+        return {"zone": "AMBER (Review)", "color": "orange", "confidence_pct": "75%", "complexity": 8}
