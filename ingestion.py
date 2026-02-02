@@ -2,115 +2,99 @@ import os
 import re
 
 class FileIngestor:
-    """
-    Phase 1: Legacy Code Ingestion & Normalization.
-    Handles file parsing, encoding resilience, and structural normalization
-    to prepare voluminous code for technical analysis.
-    """
-
-    @staticmethod
-    def normalize(code: str) -> str:
-        """
-        Standardizes legacy source code to reduce token usage and improve clarity.
-        1. Collapses redundant multiple spaces (common in COBOL).
-        2. Strips leading/trailing whitespace.
-        3. Removes empty lines to condense logic.
-        """
-        if not code:
-            return ""
-
-        # 1. Replace multiple spaces with a single space 
-        # (This collapses COBOL's fixed-field whitespace while preserving logic)
-        code = re.sub(r' +', ' ', code)
-
-        # 2. Process line by line for standardization
-        lines = code.splitlines()
-        normalized_lines = []
-        
-        for line in lines:
-            clean_line = line.strip()
-            # Only keep lines that have actual content to save processing time
-            if clean_line:
-                normalized_lines.append(clean_line)
-
-        return "\n".join(normalized_lines)
-
     @staticmethod
     def read_uploaded_file(uploaded_file) -> str:
-        """
-        Safely reads file content from a Streamlit UploadedFile object.
-        Implements fallback decoding for legacy encodings (Latin-1).
-        """
         try:
-            # Try standard modern encoding
             return uploaded_file.read().decode("utf-8")
         except UnicodeDecodeError:
-            # Fallback for legacy files (Common in Mainframe/VB6 exports)
             uploaded_file.seek(0)
             return uploaded_file.read().decode("latin-1", errors="ignore")
 
     @staticmethod
-    def analyze_file_role(code: str, file_name: str) -> str:
-        """
-        Performs a heuristic scan to determine the file's architectural role.
-        Identifies 'Entry Points' vs 'Shared Libraries'.
-        """
-        code_upper = code.upper()
-        ext = os.path.splitext(file_name)[1].lower()
-
-        # 1. COBOL Role Detection
-        if ext in ['.cbl', '.cob']:
-            if "PROCEDURE DIVISION" in code_upper and "STOP RUN" in code_upper:
-                return "Entry Program (Main)"
-            return "Shared Library (Copybook/Subroutine)"
-
-        # 2. VB6 Role Detection
-        if ext in ['.bas', '.frm', '.cls']:
-            if "SUB MAIN()" in code_upper or "PRIVATE SUB FORM_LOAD" in code_upper:
-                return "Entry Program (UI/Startup)"
-            return "Shared Library (Module/Class)"
-
-        # 3. Java Role Detection
-        if ext == '.java':
-            if "PUBLIC STATIC VOID MAIN" in code_upper:
-                return "Entry Program (Main)"
-            return "Shared Library (Utility/Bean)"
-
-        return "Source Component"
+    def normalize(code: str) -> str:
+        return re.sub(r'[ \t]+', ' ', code)
 
     @staticmethod
-    def extract_metadata(uploaded_file, code: str) -> dict:
-        """
-        Extracts metadata used for the Ingestion Dashboard.
-        """
-        file_name = uploaded_file.name
-        role = FileIngestor.analyze_file_role(code, file_name)
+    def chunk_code(code: str, file_name: str) -> dict:
+        ext = os.path.splitext(file_name)[1].lower()
         
+        if ext in ['.cbl', '.cob']:
+            return FileIngestor._chunk_cobol(code)
+        elif ext in ['.java', '.cs']:
+            return FileIngestor._chunk_c_style(code)
+        elif ext in ['.vb', '.bas', '.frm']:
+            return FileIngestor._chunk_vb(code)
+        else:
+            return {"global_context": "Raw File", "chunks": [{"name": "Main", "code": code}]}
+
+    @staticmethod
+    def _chunk_cobol(code: str) -> dict:
+        parts = re.split(r'(?i)PROCEDURE\s+DIVISION\.?', code)
+        
+        global_context = parts[0] if len(parts) > 0 else ""
+        procedure_body = parts[1] if len(parts) > 1 else code
+
+        chunks = []
+        raw_paragraphs = re.split(r'\n\s*([A-Z0-9\-]+)\.\s', "\n" + procedure_body)
+        
+        call_pattern = r'(?i)PERFORM\s+([A-Z0-9\-]+)'
+        
+        for i in range(1, len(raw_paragraphs), 2):
+            name = raw_paragraphs[i]
+            body = raw_paragraphs[i+1]
+            calls = re.findall(call_pattern, body)
+            chunks.append({
+                "name": name,
+                "code": body,
+                "dependencies": list(set(calls))
+            })
+            
+        return {"global_context": global_context, "chunks": chunks}
+
+    @staticmethod
+    def _chunk_vb(code: str) -> dict:
+        lines = code.splitlines()
+        globals_lines = []
+        chunks = []
+        current_chunk = []
+        chunk_name = None
+        in_func = False
+
+        for line in lines:
+            if re.search(r'(?i)^(Public|Private)?\s*(Sub|Function)', line):
+                in_func = True
+                match = re.search(r'(?i)(Sub|Function)\s+(\w+)', line)
+                chunk_name = match.group(2) if match else "Unknown"
+                current_chunk.append(line)
+            
+            elif re.search(r'(?i)End\s*(Sub|Function)', line):
+                current_chunk.append(line)
+                chunks.append({
+                    "name": chunk_name,
+                    "code": "\n".join(current_chunk),
+                    "dependencies": [] 
+                })
+                current_chunk = []
+                in_func = False
+                chunk_name = None
+            
+            elif in_func:
+                current_chunk.append(line)
+            
+            else:
+                if line.strip(): globals_lines.append(line)
+
+        return {"global_context": "\n".join(globals_lines), "chunks": chunks}
+
+    @staticmethod
+    def _chunk_c_style(code: str) -> dict:
+        return {"global_context": "Class Imports & Definitions", "chunks": [{"name": "WholeFile", "code": code}]}
+
+    @staticmethod
+    def extract_metadata(uploaded_file, code) -> dict:
         return {
-            "file_name": file_name,
+            "file_name": uploaded_file.name,
             "size_kb": round(uploaded_file.size / 1024, 2),
-            "role": role,
+            "role": "Source",
             "line_count": len(code.splitlines())
         }
-
-    @staticmethod
-    def scan_for_dependencies(code: str) -> list:
-        """
-        Scans normalized code for external references to build 
-        initial call graph hints.
-        """
-        dependencies = []
-        
-        # Patterns for COBOL CALL, COPY, VB Declare, and Java Import
-        patterns = [
-            r'(?i)CALL\s+[\'\"](\w+)[\'\"]',  # COBOL Call
-            r'(?i)COPY\s+(\w+)',              # COBOL Copybook
-            r'(?i)Declare\s+Sub\s+(\w+)',     # VB API
-            r'(?i)import\s+([\w\.]+)'         # Java Import
-        ]
-        
-        for pattern in patterns:
-            matches = re.findall(pattern, code)
-            dependencies.extend(matches)
-            
-        return list(set(dependencies))
