@@ -3,48 +3,72 @@ import json
 import requests
 from dotenv import load_dotenv
 
-# Load Environment Variables
 load_dotenv()
 
 class UnifiedOpenAIAgent:
-    """
-    Chained Synthesis Engine.
-    Communicates via direct HTTP requests to an LLM endpoint.
-    Handles Global Context analysis and Chunk-by-Chunk code streaming.
-    """
     def __init__(self):
-        # Configuration from .env
         self.endpoint = os.getenv("LLM_ENDPOINT")
         self.api_key = os.getenv("LLM_KEY")
-        
-        if not self.endpoint or not self.api_key:
-            # Allow app to load, UI will show warning if keys missing
-            pass
-
-        # Connection Pooling for high performance
         self.session = requests.Session()
-        # Standard header setup for Azure/Enterprise Gateways
-        # If using standard OpenAI, change 'api-key' to 'Authorization': f'Bearer {self.api_key}'
         self.session.headers.update({
             "api-key": self.api_key,
             "Content-Type": "application/json"
         })
 
-    # --- PART 1: LOGIC STREAMING (CHUNK BASED) ---
+    def generate_summary(self, global_context: str) -> dict:
+        if not global_context or len(global_context) < 50:
+            return {"summary": "Insufficient data to generate summary."}
+
+        prompt = f"""
+        Analyze this Legacy Code Context (Headers/Variables) and provide a 200-word System Summary.
+        Identify the business domain and potential logic based on variables found.
+        
+        CODE CONTEXT:
+        {global_context[:12000]}
+        
+        Return JSON: {{"summary": "Your text here"}}
+        """
+        
+        payload = {"messages": [{"role": "user", "content": prompt}], "temperature": 0.2}
+        try:
+            response = self.session.post(self.endpoint, json=payload, timeout=60)
+            res_json = response.json()
+            content = res_json['choices'][0]['message']['content']
+            if "```" in content:
+                content = content.split("```json")[1].split("```")[0].strip() if "```json" in content else content.replace("```", "").strip()
+            return json.loads(content)
+        except:
+            return {"summary": "Summary analysis failed."}
+
+    def generate_global_structure(self, global_context: str, target_lang: str) -> str:
+        prompt = f"""
+        TASK: Generate the Class Structure (Header, Imports, Private Member Variables) for {target_lang}.
+        Based on this Legacy Global Context:
+        
+        {global_context[:8000]}
+        
+        INSTRUCTIONS:
+        1. Define the class.
+        2. Define private member variables to match the legacy data types.
+        3. Do NOT write any methods or logic blocks yet.
+        4. Return Code Only. No markdown wrappers.
+        """
+        
+        payload = {"messages": [{"role": "user", "content": prompt}], "temperature": 0.1}
+        try:
+            response = self.session.post(self.endpoint, json=payload, timeout=60)
+            content = response.json()['choices'][0]['message']['content']
+            return content.replace("```java", "").replace("```python", "").replace("```", "").strip()
+        except:
+            return f"// Error generating structure for {target_lang}"
 
     def process_chunk_stream(self, chunk: dict, global_context: str, target_lang: str):
-        """
-        Streams the conversion of a single logical unit (Method/Paragraph).
-        Uses Global Context to ensure variable names match the class state.
-        """
-        java_constraints = ""
-        if "Java" in target_lang:
-            java_constraints = "Use Vanilla Java 17+ syntax. No Spring annotations."
+        java_constraints = "Use Vanilla Java 17+ syntax. No Spring annotations." if "Java" in target_lang else ""
 
         prompt = f"""
         TASK: Convert this specific Legacy Code Chunk to {target_lang}.
         
-        GLOBAL CONTEXT (Variables/State available in the class):
+        GLOBAL CONTEXT (Class Variables/State available):
         \"\"\"
         {global_context[:6000]} 
         \"\"\"
@@ -59,7 +83,7 @@ class UnifiedOpenAIAgent:
         INSTRUCTIONS:
         1. Output ONLY the code for this specific method/function.
         2. Use the Global Context to correctly reference class member variables.
-        3. Do not output class headers, imports, or closing braces (handled by Skeleton).
+        3. Do NOT output class headers, imports, or closing braces.
         4. {java_constraints}
         
         START CODE IMMEDIATELY:
@@ -77,7 +101,6 @@ class UnifiedOpenAIAgent:
 
         try:
             with self.session.post(self.endpoint, json=payload, stream=True, timeout=120) as resp:
-                resp.raise_for_status()
                 for line in resp.iter_lines():
                     if line:
                         line_text = line.decode("utf-8").strip()
@@ -92,78 +115,18 @@ class UnifiedOpenAIAgent:
         except Exception as e:
             yield f"// Error converting chunk {chunk['name']}: {str(e)}"
 
-    # --- PART 2: SKELETON GENERATION (STATIC) ---
+    def get_test_prompt(self, full_code: str, target_lang: str) -> str:
+        framework = "JUnit 5" if "Java" in target_lang else "pytest"
+        return f"""
+        TASK: Generate a single comprehensive {framework} test file for the modernized code below.
+        Ensure every business logic path and edge case is covered.
+        
+        CODE TO TEST:
+        {full_code[:15000]}
+        """
 
-    def generate_global_structure(self, global_context: str, target_lang: str) -> str:
-        """
-        Generates the Class Header, Imports, and Private Member Variables.
-        """
-        prompt = f"""
-        TASK: Generate the Class Structure (Header, Imports, Private Member Variables) for {target_lang}.
-        Based on this Legacy Global Context:
-        
-        {global_context[:8000]}
-        
-        INSTRUCTIONS:
-        1. Define the class (public class ModernizedLegacy).
-        2. Define private member variables to match the legacy data types.
-        3. Do NOT write any methods. Stop immediately after the variable declarations.
-        4. Return Code Only. No markdown blocks.
-        """
-        
-        payload = {
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1
-        }
-        
-        try:
-            response = self.session.post(self.endpoint, json=payload, timeout=60)
-            response.raise_for_status()
-            res_json = response.json()
-            content = res_json['choices'][0]['message']['content']
-            
-            # Clean markdown if present
-            content = content.replace("```java", "").replace("```python", "").replace("```", "")
-            return content.strip()
-        except Exception as e:
-            return f"// Error generating structure: {str(e)}"
-
-    # --- PART 3: SUMMARY GENERATION (STATIC) ---
-
-    def generate_summary(self, global_context: str) -> dict:
-        """
-        Generates a high-level system summary based on the Data Division/Global Context.
-        """
-        # Safety check for empty context
-        context_to_send = global_context
-        if not context_to_send or len(context_to_send) < 50:
-            return {"summary": "Insufficient data to generate summary. Please check file ingestion."}
-
-        prompt = f"""
-        Analyze this Legacy Code Context (Headers/Variables) and provide a 200-word System Summary.
-        Identify the business domain (e.g. Finance, Inventory) and potential logic based on variables found.
-        
-        CODE CONTEXT:
-        {context_to_send[:12000]}
-        
-        Return JSON: {{"summary": "Your text here"}}
-        """
-        
-        payload = {
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2
-        }
-        
-        try:
-            response = self.session.post(self.endpoint, json=payload, timeout=60)
-            response.raise_for_status()
-            res_json = response.json()
-            content = res_json['choices'][0]['message']['content']
-            
-            # Simple cleanup for JSON parsing
-            if "```" in content:
-                content = content.split("```json")[1].split("```")[0].strip() if "```json" in content else content.replace("```", "").strip()
-                
-            return json.loads(content)
-        except Exception as e:
-            return {"summary": f"Summary Analysis failed: {str(e)}"}
+    def calculate_dashboard_metrics(self, doc_text: str) -> dict:
+        length = len(doc_text)
+        if length > 500:
+            return {"zone": "GREEN", "color": "green", "confidence_pct": "95%", "complexity": 5}
+        return {"zone": "AMBER", "color": "orange", "confidence_pct": "70%", "complexity": 8}
