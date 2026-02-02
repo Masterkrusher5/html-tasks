@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 
 # --- THREADING CONTEXT IMPORTS ---
-# Critical for preventing 'NoSessionContext' errors during real-time streaming
+# Prevents 'NoSessionContext' errors during real-time streaming
 from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 
 # Import specialized core modules
@@ -17,7 +17,7 @@ load_dotenv()
 
 # 1. Page Configuration
 st.set_page_config(
-    page_title="Forensic Modernizer Pro",
+    page_title="Chained Modernizer Pro",
     page_icon="🛡️",
     layout="wide"
 )
@@ -124,13 +124,12 @@ if uploaded_file:
 
         # Thread-safe code container
         code_container = []
-        final_results = {"code": "", "tests": ""}
 
         def chained_worker():
             agent = st.session_state.agent
             g_ctx = st.session_state.global_context
             chunks = st.session_state.chunks
-            lang_key = "java" if "Java" in target_stack else "python"
+            lang_key = "java" if "Java" in target_stack else "python" if "Python" in target_stack else "csharp"
             
             try:
                 # 1. Synthesize Class Skeleton
@@ -148,7 +147,7 @@ if uploaded_file:
                     
                     code_container.append(f"\n    // --- Logic Implementation: {chunk['name']} ---\n")
                     
-                    # Stream specific logic
+                    # Stream specific logic token-by-token
                     for delta in agent.process_chunk_stream(chunk, g_ctx, target_stack):
                         code_container[-1] += delta
                         with ui_lock:
@@ -157,7 +156,7 @@ if uploaded_file:
                     
                     code_container.append("\n")
 
-                # 3. Assemble and Finalize
+                # 3. Assemble and Finalize Class
                 if "Java" in target_stack or "C#" in target_stack:
                     code_container.append("\n}")
                 
@@ -178,6 +177,7 @@ if uploaded_file:
                     test_slot.code(full_tests, language=lang_key)
                     status_slot.success("🎯 Modernization & Testing Complete!")
                 
+                # PERSIST TESTS TO SESSION STATE
                 st.session_state.final_tests = full_tests
 
             except Exception as e:
@@ -193,21 +193,32 @@ if "final_code" in st.session_state:
     st.divider()
     st.subheader("📥 Download Modernized Artifacts")
     
+    # Determine extension
     ext = "java" if "Java" in target_stack else "py" if "Python" in target_stack else "cs"
     
     dl_col1, dl_col2 = st.columns(2)
+    
+    # Download Source Code
     with dl_col1:
         st.download_button(
-            label=f"💾 Download Source ({ext.upper()})",
+            label=f"💾 Download Source Code ({ext.upper()})",
             data=st.session_state.final_code,
-            file_name=f"modernized_full.{ext}",
+            file_name=f"modernized_component.{ext}",
+            mime="text/plain",
             use_container_width=True
         )
+    
+    # Download Unit Test Suite (JUnit / PyTest)
     with dl_col2:
         if "final_tests" in st.session_state:
+            # File prefix based on framework
+            file_prefix = "Test" if ext == "java" else "test_"
             st.download_button(
-                label=f"🧪 Download Test Suite ({ext.upper()})",
+                label=f"🧪 Download Unit Tests ({ext.upper()})",
                 data=st.session_state.final_tests,
-                file_name=f"test_suite_full.{ext}",
+                file_name=f"{file_prefix}Modernized.{ext}",
+                mime="text/plain",
                 use_container_width=True
             )
+        else:
+            st.warning("Unit tests are still being generated...")
